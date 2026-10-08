@@ -1,0 +1,9 @@
+/.env
+/.state/
+/workspace/
+/tmp/
+/.venv/
+__pycache__/
+*.pyc
+*.zip
+.DS_Store

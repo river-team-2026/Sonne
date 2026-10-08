@@ -1,0 +1,3 @@
+# Working rules
+
+[INSERT YOUR AGENT WORKING RULES HERE]
