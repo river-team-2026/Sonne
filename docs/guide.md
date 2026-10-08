@@ -110,7 +110,7 @@ Anyone can download Sonne. You do not need a GitHub account, access token or SSH
 ```bash
 mkdir -p ~/agents
 cd ~/agents
-git clone https://github.com/Krabbens/sonne.git
+git clone https://github.com/river-team-2026/Sonne.git sonne
 cd sonne
 ```
 

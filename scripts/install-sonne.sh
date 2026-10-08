@@ -130,7 +130,7 @@ fi
 
 if [[ ! -d $INSTALL_DIR/.git ]]; then
   mkdir -p -- "$(dirname -- "$INSTALL_DIR")"
-  git clone --no-checkout https://github.com/Krabbens/sonne.git "$INSTALL_DIR"
+  git clone --no-checkout https://github.com/river-team-2026/Sonne.git "$INSTALL_DIR"
   git -C "$INSTALL_DIR" checkout --detach "$REF"
   printf '%s\n' "$REF" > "$INSTALL_DIR/.sonne-auto-installer"
 fi

@@ -15,7 +15,7 @@ Then run in the Linux terminal as your normal user:
 ```bash
 sudo apt-get update
 sudo apt-get install -y git
-git clone https://github.com/Krabbens/sonne.git ~/sonne-installer
+git clone https://github.com/river-team-2026/Sonne.git ~/sonne-installer
 cd ~/sonne-installer
 bash scripts/install-sonne.sh
 ```
@@ -122,7 +122,7 @@ After installing the host tools, run these commands as your own Linux user:
 ```bash
 mkdir -p ~/agents
 cd ~/agents
-git clone https://github.com/Krabbens/sonne.git
+git clone https://github.com/river-team-2026/Sonne.git sonne
 cd sonne
 ```
 
@@ -195,6 +195,10 @@ The 64k context preset has not been measured on an 8 GB host; repeat the memory
 acceptance check under the existing container caps before relying on it.
 
 ## Change the prompt or access list
+
+The root `PROMPT` file is a place to draft your own prompt. It is not loaded
+automatically; copy the finished instructions into the persona or working-rules
+file described below.
 
 Replace the placeholders in `templates/workspace/SOUL.md` (persona) and
 `templates/workspace/AGENTS.md` (working rules) with your own instructions, then
