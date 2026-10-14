@@ -7,10 +7,13 @@ separate 16 GiB profile.
 
 ## Automated installation
 
-For Ubuntu 24.04 or Debian 13, amd64 or ARM64, use the
+For Ubuntu 22.04/24.04 or Debian 13, amd64 or ARM64, use the
 [illustrated English PDF](output/pdf/sonne-auto-setup.pdf)
 ([LaTeX source](docs/guide-auto.tex)) to create your Discord bot, collect its
 bot token, OAuth2 Client Secret and IDs, and register the web sign-in redirect.
+Ubuntu 22.04 uses Docker's `jammy` repository. The PDF still names Ubuntu 24.04;
+the automatic installer also accepts 22.04. Full inference on 22.04 has not been
+validated.
 Then run in the Linux terminal as your normal user:
 
 ```bash
@@ -167,7 +170,7 @@ and your own bot token. See [validation status](docs/validation.md).
 
 ## Prerequisites
 
-- An installed Ubuntu 24.04 LTS or Debian 13 system, amd64 or ARM64, and a normal non-root
+- An installed Ubuntu 22.04/24.04 LTS or Debian 13 system, amd64 or ARM64, and a normal non-root
   Linux user with sudo access. Docker, Git and Python installation is included.
 - An otherwise lightly loaded machine with approximately 8 GiB RAM and 15 GiB
   free disk for Qwen, or 16 GiB RAM and 20 GiB free disk for Gemma. These allowances

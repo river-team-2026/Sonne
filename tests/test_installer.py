@@ -111,6 +111,23 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse((self.project / '.state').exists())
 
     @unittest.skipUnless(sys.platform.startswith('linux'), 'Full CLI needs Linux')
+    def test_os_selection_uses_matching_docker_repository_and_rejects_unknown_versions(self):
+        selection = SOURCE.split('case "$ID:${VERSION_ID:-}" in\n', 1)[1].split('\nesac', 1)[0]
+        script = ('die() { echo "$*" >&2; exit 1; }; ID=$1; VERSION_ID=$2; '
+                  'case "$ID:${VERSION_ID:-}" in\n' + selection + '\nesac\nprintf "%s\\n" "$SUITE"')
+        for distro, version, suite in [('ubuntu', '22.04', 'jammy'),
+                                       ('ubuntu', '24.04', 'noble'),
+                                       ('debian', '13', 'trixie')]:
+            with self.subTest(distro=distro, version=version):
+                result = subprocess.run(['bash', '-c', script, 'test', distro, version],
+                                        capture_output=True, text=True, check=True)
+                self.assertEqual(result.stdout.strip(), suite)
+        result = subprocess.run(['bash', '-c', script, 'test', 'ubuntu', '20.04'],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Supported targets:', result.stderr)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Full CLI needs Linux')
     def test_prepare_cli_default_saved_choice_override_and_interactive_menu(self):
         shutil.rmtree(self.project)
         subprocess.run(['git', 'clone', '--quiet', '--shared', '--no-checkout', str(ROOT), str(self.project)], check=True)

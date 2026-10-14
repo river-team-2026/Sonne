@@ -19,7 +19,7 @@ while (($#)); do
     --prepare-only) PREPARE_ONLY=1; shift ;;
     --help|-h)
       printf '%s\n' 'Usage: bash install-sonne.sh [--model qwen|gemma] [--dir PATH] [--env-file FILE] [--prepare-only]' \
-        'Ubuntu 24.04 or Debian 13; amd64 or arm64; run as a normal user.' \
+        'Ubuntu 22.04/24.04 or Debian 13; amd64 or arm64; run as a normal user.' \
         'qwen: Qwen3.5 2B Q4_K_M, approximately 8 GiB host RAM (default).' \
         'gemma: Gemma 4 E2B IT QAT, approximately 16 GiB host RAM.' \
         'First interactive run offers a model menu; later runs keep the saved choice.' \
@@ -37,9 +37,10 @@ trap 'printf "Setup stopped. Review the error above, fix it, then re-run this sc
 [[ -r /etc/os-release ]] || die 'Cannot identify the operating system.'
 . /etc/os-release
 case "$ID:${VERSION_ID:-}" in
+  ubuntu:22.04) SUITE=jammy ;;
   ubuntu:24.04) SUITE=noble ;;
   debian:13|debian:13.*) SUITE=trixie ;;
-  *) die 'Supported targets: Ubuntu 24.04 LTS and Debian 13.' ;;
+  *) die 'Supported targets: Ubuntu 22.04/24.04 LTS and Debian 13.' ;;
 esac
 ARCH=$(dpkg --print-architecture)
 [[ $ARCH == amd64 || $ARCH == arm64 ]] || die 'Only amd64 and arm64 are supported.'
