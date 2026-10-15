@@ -6,7 +6,7 @@ For the concise, current installation procedure, use [the PDF](../output/pdf/son
 
 ## 1. Deployment profile
 
-Run one small, multimodal OpenClaw agent on **Ubuntu 24.04 LTS, amd64, 8 GB total RAM, no GPU**. Start with an installed Ubuntu system and your own normal user account with sudo access. Pages 2 and 3 install the tools and Docker, test them, and download the public project. No GitHub account is required. Allow roughly 15 GB free disk initially and check usage after pulling images.
+Run one small, multimodal OpenClaw agent on **Ubuntu 22.04 or 24.04 LTS, amd64, 8 GB total RAM, no GPU**. Start with an installed Ubuntu system and your own normal user account with sudo access. Pages 2 and 3 install the tools and Docker, test them, and download the public project. No GitHub account is required. Allow roughly 15 GB free disk initially and check usage after pulling images.
 
 The agent understands text, photos and screenshots, and reads or writes small text files. One Discord channel serves several explicitly allowed users. They share the channel conversation and the same files. Audio, video and shell execution are outside this profile.
 
@@ -41,7 +41,7 @@ free -h
 df -h "$HOME"
 ```
 
-Require Ubuntu **24.04** and **amd64**. The Docker repository below is specifically for that combination. On a fresh host without an existing container runtime, install the utilities used throughout this guide:
+Require Ubuntu **22.04 or 24.04** and **amd64**. The Docker commands select `jammy` for 22.04 and `noble` for 24.04, matching the automatic installer. On a fresh host without an existing container runtime, install the utilities used throughout this guide:
 
 ```bash
 sudo apt-get update
@@ -56,14 +56,15 @@ Git downloads the project; Python generates config; nano edits files. `procps` s
 If this host already runs Docker, containerd or Podman, first check the [official installation and package-conflict instructions](https://docs.docker.com/engine/install/ubuntu/). Do not remove a runtime serving other workloads. A working Docker Engine with the Compose plugin can proceed to page 3's checks.
 
 ```bash
+. /etc/os-release
 sudo install -m 0755 -d /etc/apt/keyrings
 sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
   -o /etc/apt/keyrings/docker.asc
 sudo chmod a+r /etc/apt/keyrings/docker.asc
-sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<'EOF'
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
 Types: deb
 URIs: https://download.docker.com/linux/ubuntu
-Suites: noble
+Suites: $VERSION_CODENAME
 Components: stable
 Architectures: amd64
 Signed-By: /etc/apt/keyrings/docker.asc

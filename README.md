@@ -11,9 +11,9 @@ For Ubuntu 22.04/24.04 or Debian 13, amd64 or ARM64, use the
 [illustrated English PDF](output/pdf/sonne-auto-setup.pdf)
 ([LaTeX source](docs/guide-auto.tex)) to create your Discord bot, collect its
 bot token, OAuth2 Client Secret and IDs, and register the web sign-in redirect.
-Ubuntu 22.04 uses Docker's `jammy` repository. The PDF still names Ubuntu 24.04;
-the automatic installer also accepts 22.04. Full inference on 22.04 has not been
-validated.
+Ubuntu 22.04 uses Docker's `jammy` repository; 24.04 uses `noble`.
+Configuration preparation was tested on Ubuntu 22.04; full inference on that
+release has not been validated.
 Then run in the Linux terminal as your normal user:
 
 ```bash
