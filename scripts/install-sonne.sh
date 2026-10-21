@@ -327,6 +327,13 @@ config['agents']['defaults']['imageMaxDimensionPx'] = 768
 config['tools']['media']['image']['timeoutSeconds'] = 600
 config_path.write_text(json.dumps(config, indent=2) + '\n')
 config_path.chmod(0o600)
+# Keep the requested Discord settings before a CLI startup projects stored state
+# back into openclaw.json. Reconfiguration must update that stored state too.
+discord_batch = Path('.state/openclaw/installer-discord-config.json')
+discord_batch.write_text(json.dumps([
+    {'path': 'channels.discord', 'value': config['channels']['discord']}
+]) + '\n')
+discord_batch.chmod(0o600)
 selection_path = Path('.state/sonne-model')
 selection_path.write_text(selected_model + '\n')
 selection_path.chmod(0o600)
@@ -355,6 +362,8 @@ if [[ ! -f $plugin_marker ]]; then
     @openclaw/discord@2026.9.8 --pin --accept-capabilities --force
   touch "$plugin_marker"
 fi
+compose run --rm --no-deps -T openclaw node dist/index.js config set \
+  --batch-file /home/node/.openclaw/installer-discord-config.json
 # Pinned Discord plugin: normalize model-generated reply IDs before delivery.
 compose run --rm --no-deps -T openclaw node - <<'JS_DISCORD_REPLY_FIX'
 const fs = require('node:fs');

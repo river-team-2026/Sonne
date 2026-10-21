@@ -72,6 +72,11 @@ class InstallerTests(unittest.TestCase):
                 self.assertEqual(config['tools']['media']['models'][0]['model'], tag)
                 self.assertEqual(config['tools']['allow'], ['read', 'write', 'edit', 'view_image'])
                 self.assertTrue(config['channels']['discord']['guilds']['222222222222222222']['requireMention'])
+                batch_path = self.project / '.state/openclaw/installer-discord-config.json'
+                self.assertEqual(json.loads(batch_path.read_text()), [
+                    {'path': 'channels.discord', 'value': config['channels']['discord']}
+                ])
+                self.assertNotIn('synthetic-installer-token', batch_path.read_text())
                 override = (self.project / 'compose.override.yaml').read_text()
                 self.assertIn('mem_limit: ' + memory, override)
                 self.assertIn('memswap_limit: ' + memory, override)
