@@ -479,7 +479,7 @@ def deliver_enrollment(enrollment, checkout):
     directory = checkout / '.state/revit-client'
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / 'config.json'
-    display = windows_path(target)
+    display = windows_path(directory) + '\\config.json'
     location = enrollment.with_suffix('.windows-path')
     updated = None
     if target.exists():
@@ -557,7 +557,19 @@ def prepare_revit(runtime, local, url):
     if not local.exists():
         write_json(local, config)
         print('Configured the Snowdon test schedule and its 60 m² / 30 m² brief.', flush=True)
-    deliver_enrollment(enrollment, Path(__file__).resolve().parents[1])
+    try:
+        deliver_enrollment(enrollment, Path(__file__).resolve().parents[1])
+    except (OSError, subprocess.CalledProcessError) as error:
+        if not enrollment.is_file():
+            raise SetupError(f'Revit enrollment file is missing: {enrollment}') from error
+        if isinstance(error, OSError):
+            detail = f'{error.strerror} ({error.filename or "Windows enrollment"})'
+        else:
+            detail = f'{error.cmd[0]} exited with status {error.returncode}'
+        print(f'Automatic Windows enrollment failed: {detail}.', file=sys.stderr)
+        print(f'Transfer {enrollment} privately to the Windows checkout at .state/revit-client/config.json. '
+              'For an already enrolled client with the same token, update only its url. '
+              'Restart the Windows client after the transfer. Continuing ACC setup.', flush=True)
     print('Ensure the enrolled Revit 2027 client is running with publication reading enabled before publishing.', flush=True)
     return config
 
@@ -687,7 +699,7 @@ def main():
         if error.errno == EADDRINUSE:
             print('Port 8765 is already in use. Close the other APS setup terminal and retry.', file=sys.stderr)
         else:
-            print('ACC setup stopped. Check the runtime path and local service status.', file=sys.stderr)
+            print(f'ACC setup stopped: {error.strerror} ({error.filename or "local I/O"}).', file=sys.stderr)
         return 1
     except (SetupError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         message = str(error) if isinstance(error, SetupError) else 'Check the runtime path, OAuth callback port and Compose service status.'

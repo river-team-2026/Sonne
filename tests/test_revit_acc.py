@@ -170,6 +170,17 @@ class IntegratedAccTests(unittest.TestCase):
         self.assertEqual(provision.call_args.args[0][3:5], ['https://existing.example.com/revit/', 'design-pc'])
         self.assertEqual(self.local.read_bytes(), before)
 
+    def test_windows_copy_failure_keeps_private_enrollment_and_continues(self):
+        hub = self.runtime / '.state/revit-hub'
+        hub.mkdir()
+        enrollment = hub / 'enroll-windows-01.json'
+        enrollment.write_text('{"token":"test-only"}')
+        with patch.object(acc.subprocess, 'run'), patch.object(acc, 'deliver_enrollment',
+                side_effect=PermissionError(13, 'Permission denied', 'config.json')):
+            config = acc.prepare_revit(self.runtime, self.local, 'https://example.com/revit/')
+        self.assertEqual(config['worker'], 'windows-01')
+        self.assertTrue(enrollment.is_file())
+
     @unittest.skipUnless('microsoft' in acc.platform.release().lower(), 'Needs WSL with Windows interop')
     def test_windows_enrollment_is_private_and_preserves_launch_settings_on_rerun(self):
         temp = acc.subprocess.check_output(['cmd.exe', '/u', '/d', '/c', 'echo %TEMP%']).decode('utf-16-le').strip()
