@@ -151,6 +151,11 @@ if [[ ! -d $INSTALL_DIR/.git ]]; then
   printf '%s\n' "$REF" > "$INSTALL_DIR/.sonne-auto-installer"
 fi
 cd "$INSTALL_DIR"
+# Remember custom locations, including mounted drives, for offline uninstall discovery.
+index="$HOME/.local/state/sonne/runtimes"
+mkdir -p -- "$index"
+key=$(printf '%s' "$INSTALL_DIR" | sha256sum | cut -d' ' -f1)
+printf '%s\n' "$INSTALL_DIR" > "$index/$key.path"
 [[ $(git rev-parse HEAD) == "$REF" ]] || die 'Source revision changed; use the manual upgrade procedure.'
 git diff --quiet HEAD -- compose.yaml scripts/configure.py templates/openclaw.json || \
   die 'Core files have local changes; preserve them and use the manual procedure.'

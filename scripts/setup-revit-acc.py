@@ -223,6 +223,28 @@ def hook_id(response, headers):
     return value
 
 
+def remove_saved_hook(runtime):
+    directory = runtime / '.state/revit-publications-acc'
+    config = directory / 'config.json'
+    if not config.is_file():
+        return
+    aps = json.loads(config.read_text())['aps']
+    hook = hook_id({'hookId': aps['hook_id']}, {})
+    auth = json.loads((directory / 'aps-auth.json').read_text())
+    token, _ = aps_request('/authentication/v2/token', label='APS webhook removal authorization',
+                           credentials=(auth['client_id'], auth['client_secret']),
+                           form={'grant_type': 'client_credentials', 'scope': 'data:read data:write'})
+    request = Request(APS + HOOK_PATH + '/' + quote(hook, safe=''), method='DELETE',
+                      headers={'Authorization': 'Bearer ' + token['access_token'], 'region': aps['region']})
+    try:
+        with build_opener(NoRedirect()).open(request, timeout=20):
+            pass
+    except HTTPError as error:
+        if error.code != 404:
+            raise SetupError(f'Could not remove APS webhook {hook} (HTTP {error.code}).') from None
+    print(f'APS webhook {hook} removed or already absent.')
+
+
 def write_private(path, contents):
     temporary = path.with_name('.' + path.name + '-' + secrets.token_hex(8))
     try:
@@ -458,7 +480,9 @@ def deliver_enrollment(enrollment, checkout):
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / 'config.json'
     display = windows_path(target)
+    location = enrollment.with_suffix('.windows-path')
     if target.exists():
+        write_private(location, windows_path(checkout) + '\n')
         print(f'Using existing Windows client configuration: {display}', flush=True)
         return
 
@@ -482,6 +506,7 @@ def deliver_enrollment(enrollment, checkout):
             return
     finally:
         temp.unlink(missing_ok=True)
+    write_private(location, windows_path(checkout) + '\n')
     print(f'Installed Windows client configuration: {display}', flush=True)
 
 
@@ -530,6 +555,9 @@ def prepare_revit(runtime, local):
 
 def setup(args):
     runtime = args.runtime.expanduser().resolve(strict=True)
+    if getattr(args, 'remove_hook', False):
+        remove_saved_hook(runtime)
+        return
     state = runtime / '.state'
     if args.status:
         print_status(publication_status(runtime))
@@ -634,6 +662,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
     mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--remove-hook', action='store_true', help='Unregister the saved Sonne publication webhook.')
     mode.add_argument('--install', action='store_true', help='Provision Revit and the room check in an installed Sonne runtime, then run automatic ACC setup.')
     mode.add_argument('--auto', action='store_true', help='Start a Quick Tunnel, register the hook, and show publication status.')
     mode.add_argument('--callback', help='Register an APS webhook at this public HTTPS URL.')

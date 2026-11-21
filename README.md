@@ -103,6 +103,31 @@ compatibility. It permits an empty OAuth2 secret for preparation; web sign-in
 remains disabled until the secret is provided. Existing unrelated destination folders and custom Compose
 overrides are refused. See the [validation record](docs/validation.md).
 
+## Uninstall Sonne
+
+On Windows, double-click **uninstall-sonne.cmd** in the Sonne checkout or run this command from that folder:
+
+```powershell
+.\uninstall-sonne.cmd
+```
+
+The launcher searches local WSL distributions for installer-marked runtimes, displays the distribution, owner and directory, and runs the uninstaller as the installation owner. If several runtimes are present, select one by number. On a Windows workstation with only a Revit client it offers local client cleanup. Use `.\uninstall-sonne.cmd --list` for read-only discovery.
+
+On a Linux server, run from the installer checkout:
+
+```bash
+python3 scripts/uninstall-sonne.py
+```
+
+| Choice | Result |
+| --- | --- |
+| **1. Keep data** (default) | Removes the Docker services and network. Keeps Prompt Studio profiles, workspace files, credentials, publication history and downloaded models. Rerun the installer with the same directory to restore the services. |
+| **2. Purge** | Type `DELETE` to erase the installer-created runtime directory, its Docker volumes and Sonne-built images. The script also unregisters the saved APS webhook. |
+
+If the ACC Quick Tunnel or Revit client terminal is open, press **Ctrl+C** there first. Purge uses saved client locations and searches local Windows drives for older enrollments. It checks each enrollment against the selected server. Close Revit and type `REMOVE` when prompted to also remove a dedicated Revit MCP add-in. For a separate workstation, run the same Windows launcher there.
+
+Use `--keep-data` or `--purge` to select a mode directly. Custom Linux runtime directories are discovered from installer markers, saved locations and Docker labels. For older offline installations on external or network mounts, the Linux script also accepts `--dir PATH`. Shared Docker software and base images, the source checkout, separately stored RVT files, and the Discord and Autodesk projects are outside the purge.
+
 ## Prompt Studio prototype
 
 The automated installer also starts the [Prompt Studio web app](prototypes/prompt-studio/README.md)
