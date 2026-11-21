@@ -5,6 +5,11 @@ installer offers **Qwen3.5 2B Q4_K_M** or **Gemma 4 E2B IT QAT**, running locall
 on the CPU. The Qwen profile requires approximately 8 GiB host RAM; Gemma uses a
 separate 16 GiB profile.
 
+For a central Sonne server connected to desktop Revit 2027 workstations, see
+the [Revit MCP integration](integrations/revit/README.md). Each Windows client
+connects outbound over HTTPS. The integration exposes the full installed Revit
+MCP catalog, with model reads and explicitly enabled, guarded model editing.
+
 ## Automated installation
 
 For Ubuntu 22.04/24.04 or Debian 13, amd64 or ARM64, use the
@@ -23,6 +28,10 @@ git clone https://github.com/river-team-2026/Sonne.git ~/sonne-installer
 cd ~/sonne-installer
 bash scripts/install-sonne.sh
 ```
+
+To install Sonne and Prompt Studio and configure the Revit ACC publication
+test in the same run, use `bash scripts/install-sonne.sh --with-acc` after
+completing the Autodesk prerequisites. See the [ACC setup guide](integrations/revit/ACC-SETUP.md).
 
 On the first interactive run, choose **1 for Qwen** or **2 for Gemma**. Press
 Enter to use Qwen. The selection is saved with the generated configuration;

@@ -8,6 +8,7 @@ REF=8ffc0b70919edde56538391a94a18214a9aeb868
 INSTALL_DIR="$HOME/agents/sonne"
 ENV_FILE=
 PREPARE_ONLY=0
+WITH_ACC=0
 MODEL_CHOICE=
 INSTALLER_SOURCE_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
@@ -17,8 +18,9 @@ while (($#)); do
     --env-file) (($# >= 2)) || die 'Missing --env-file value'; ENV_FILE=$2; shift 2 ;;
     --model) (($# >= 2)) || die 'Missing --model value'; MODEL_CHOICE=$2; shift 2 ;;
     --prepare-only) PREPARE_ONLY=1; shift ;;
+    --with-acc) WITH_ACC=1; shift ;;
     --help|-h)
-      printf '%s\n' 'Usage: bash install-sonne.sh [--model qwen|gemma] [--dir PATH] [--env-file FILE] [--prepare-only]' \
+      printf '%s\n' 'Usage: bash install-sonne.sh [--model qwen|gemma] [--dir PATH] [--env-file FILE] [--prepare-only | --with-acc]' \
         'Ubuntu 22.04/24.04 or Debian 13; amd64 or arm64; run as a normal user.' \
         'qwen: Qwen3.5 2B Q4_K_M, approximately 8 GiB host RAM (default).' \
         'gemma: Gemma 4 E2B IT QAT, approximately 16 GiB host RAM.' \
@@ -26,11 +28,20 @@ while (($#)); do
         'Collects the bot token, OAuth2 Client Secret, Discord IDs and web address together.' \
         'Installs Prompt Studio with one profile per permitted Discord user.' \
         'Default destination: ~/agents/sonne. Existing unrelated folders are refused.' \
-        '--prepare-only requires git/python3; creates local config without sudo or Docker.'
+        '--prepare-only requires git/python3; creates local config without sudo or Docker.' \
+        '--with-acc installs the Revit server and sets up an APS webhook with cloudflared; requires an interactive terminal.'
       exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
 done
+if ((WITH_ACC)); then
+  ((!PREPARE_ONLY)) || die 'Use --with-acc for a full installation, without --prepare-only.'
+  [[ -t 0 ]] || die 'Open an interactive Linux terminal for Autodesk authorization.'
+  for source in scripts/setup-revit-acc.py scripts/forward-revit-aps.py scripts/setup-revit-server.sh \
+      scripts/provision-revit.py compose.revit.yaml integrations/revit/Dockerfile; do
+    [[ -f $INSTALLER_SOURCE_ROOT/$source ]] || die 'Run --with-acc from a complete Sonne source checkout.'
+  done
+fi
 trap 'printf "Setup stopped. Review the error above, fix it, then re-run this script.\n" >&2' ERR
 [[ $(uname -s) == Linux ]] || die 'Run this script on the target Linux host.'
 [[ $(id -u) != 0 ]] || die 'Run without sudo; the script requests sudo when needed.'
@@ -84,6 +95,7 @@ if ((PREPARE_ONLY)); then
   command -v git >/dev/null && command -v python3 >/dev/null || die 'Install git and python3 first.'
 else
   ram_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+  ((!WITH_ACC || ram_kib >= 11 * 1024 * 1024)) || die 'The Revit profile needs approximately 12 GiB of host RAM.'
   ((ram_kib >= (required_ram_gib - 1) * 1024 * 1024)) || \
     die "The $MODEL_CHOICE profile requires approximately $required_ram_gib GiB host RAM."
   if [[ ! -f $INSTALL_DIR/.sonne-auto-installer ]]; then
@@ -507,3 +519,9 @@ STUDIO_URL=$(python3 -c 'import json; print(json.load(open(".state/prompt-studio
 printf 'Prompt Studio: %s\nDiscord OAuth2 redirect: %s/auth/discord/callback\n' "$STUDIO_URL" "$STUDIO_URL"
 printf 'Open Prompt Studio and select Sign in with Discord, using a permitted Discord account.\n'
 printf 'To configure or change sign-in later: bash "%s" --dir "%s" --configure-login\n' "$STUDIO_HELPER" "$INSTALL_DIR"
+if ((WITH_ACC)); then
+  printf '\nSetting up Revit and ACC in %s.\n' "$INSTALL_DIR"
+  docker_sudo=0
+  if [[ ${DOCKER[0]} == sudo ]]; then docker_sudo=1; fi
+  SONNE_DOCKER_USE_SUDO=$docker_sudo python3 "$INSTALLER_SOURCE_ROOT/scripts/setup-revit-acc.py" --runtime "$INSTALL_DIR" --install
+fi

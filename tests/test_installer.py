@@ -50,6 +50,17 @@ class InstallerTests(unittest.TestCase):
     def config(self):
         return json.loads((self.project / '.state/openclaw/openclaw.json').read_text())
 
+    def test_acc_mode_requires_full_installation_and_interactive_terminal(self):
+        for options, error in (
+            (['--with-acc', '--prepare-only'], 'full installation'),
+            (['--with-acc'], 'interactive Linux terminal'),
+        ):
+            with self.subTest(options=options):
+                result = subprocess.run(['bash', str(INSTALLER), *options],
+                                        stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
+
     def test_model_choice_routes_every_model_consumer_and_resource_limit(self):
         for choice, tag, context, memory in (
             ('qwen', 'qwen3.5:2b-q4_K_M', 65536, '4g'),

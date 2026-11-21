@@ -1,0 +1,50 @@
+services:
+  ollama:
+    # Revit tool results can exceed the small base profile's working memory.
+    mem_limit: 8g
+    memswap_limit: 8g
+    environment:
+      LLAMA_ARG_CACHE_RAM: "512"
+  revit-hub:
+    build: ./integrations/revit
+    user: "${LOCAL_UID:?Run the Sonne installer}:${LOCAL_GID:?Run the Sonne installer}"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9081:9091"
+    volumes:
+      - ./.state/revit-hub:/data:ro
+      - ${REVIT_PUBLICATIONS_DIR:-./.state/revit-publications}/archives:/publication-archives:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+  revit-publications:
+    profiles: [revit-publications]
+    build: ./integrations/revit
+    command: ["node", "publication-server.mjs"]
+    user: "${LOCAL_UID:?Run the Sonne installer}:${LOCAL_GID:?Run the Sonne installer}"
+    restart: unless-stopped
+    depends_on: [revit-hub]
+    environment:
+      PORT: "9092"
+      DISCORD_BOT_TOKEN: "${DISCORD_BOT_TOKEN:?Run the Sonne installer}"
+      DISCORD_CHANNEL_ID: "${DISCORD_CHANNEL_ID:-}"
+      DISCORD_GUILD_ID: "${DISCORD_GUILD_ID:-}"
+    ports:
+      - "127.0.0.1:9082:9092"
+    volumes:
+      - ${REVIT_PUBLICATIONS_DIR:-./.state/revit-publications}:/data
+      - ./.state/prompt-studio/active/shared:/studio-brief:ro
+      - ./.state/openclaw/integrations/revit/server.json:/bridge/server.json:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 160m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9092/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}

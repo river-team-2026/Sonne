@@ -5,12 +5,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { createDiscordAuth } from './discord-auth.mjs';
-import { compilePrompt, compileTeamPrompt, compilePersonalPrompt, createProjectMemory, PROJECT_MEMORY_MAX_BYTES, validateProject, createProject, createShared, validateShared, projectChanges, historyCSV, isProjectHistoryField, MAX_FILE, MAX_TOTAL, TEXT_LIMIT } from './dist/model.mjs';
+import { DISCIPLINES, compilePrompt, compileTeamPrompt, compilePersonalPrompt, createProjectMemory, PROJECT_MEMORY_MAX_BYTES, validateProject, createProject, createShared, validateShared, projectChanges, historyCSV, isProjectHistoryField, MAX_FILE, MAX_TOTAL, TEXT_LIMIT } from './dist/model.mjs';
 
 export const START = '<!-- SONNE PROJECT PROMPT START -->';
 export const END = '<!-- SONNE PROJECT PROMPT END -->';
 export const PROMPT_BUDGET = 40000;
 const root = path.dirname(fileURLToPath(import.meta.url));
+const staticFiles = new Set(['index.html', 'app.mjs', 'model.mjs', 'request.mjs', 'styles.css', 'favicon.svg', 'logo.png',
+  ...DISCIPLINES.map(role => 'role-' + role.id + '.png')]);
 const idPattern = /^[A-Za-z0-9_-]{1,100}$/;
 const safeName = name => name.replace(/[^\p{L}\p{N}._ -]/gu, '_').replace(/^\.+/, '_').slice(0, 150) || 'source';
 const digest = text => createHash('sha256').update(text).digest('hex');
@@ -298,7 +300,7 @@ async function createWorkspaceServer(options = {}) {
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') throw new ApiError(405, 'Method not allowed.');
       const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-      if (!['index.html', 'app.mjs', 'model.mjs', 'request.mjs', 'styles.css', 'favicon.svg', 'logo.png'].includes(name)) throw new ApiError(404, 'Not found.');
+      if (!staticFiles.has(name)) throw new ApiError(404, 'Not found.');
       const bytes = await readFile(path.join(root, 'dist', name));
       const type = { '.html': 'text/html', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' }[path.extname(name)];
       response.writeHead(200, { 'Content-Type': type + (name.endsWith('.png') ? '' : '; charset=utf-8'), 'Cache-Control': 'no-cache' });
