@@ -335,6 +335,9 @@ if Path('compose.prompt-studio.yaml').is_file():
 vision_model = config['models']['providers']['ollama']['models'][0]
 vision_model.update({key: profile[key] for key in ('id', 'name', 'contextWindow', 'contextTokens')})
 vision_model['params']['num_ctx'] = profile['contextTokens']
+vision_model['reasoning'] = False
+vision_model['params']['thinking'] = False
+config['agents']['defaults']['thinkingDefault'] = 'off'
 vision_model['mediaInput'] = {'image': {'maxSidePx': 768, 'maxPixels': 262144}}
 model_ref = 'ollama/' + profile['id']
 for route in ('model', 'imageModel'):
@@ -504,7 +507,7 @@ compose up -d --wait --wait-timeout 180 ollama
 compose exec -T ollama ollama pull "$MODEL_TAG"
 compose up -d --force-recreate --wait --wait-timeout 180 openclaw prompt-studio
 compose exec -T openclaw node dist/index.js infer model run --local --agent sonne \
-  --model "ollama/$MODEL_TAG" --prompt 'Reply with exactly: sonne-ok' --json \
+  --model "ollama/$MODEL_TAG" --thinking off --prompt 'Reply with exactly: sonne-ok' --json \
   > .state/openclaw/installer-model-probe.json
 compose exec -T openclaw node dist/index.js channels status \
   --channel discord --probe --json --timeout 15000 > .state/openclaw/installer-discord-probe.json
