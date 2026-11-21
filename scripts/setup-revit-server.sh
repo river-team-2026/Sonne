@@ -55,4 +55,4 @@ if [[ -f .state/openclaw/revit-tools-config.json ]]; then
 fi
 "${compose[@]}" exec -T openclaw node dist/index.js mcp probe revit --json
 "${compose[@]}" exec -T openclaw node dist/index.js mcp reload
-echo 'Router installed. Route HTTPS /revit/ to 127.0.0.1:9081, stripping the prefix.'
+echo "Router installed for $url"

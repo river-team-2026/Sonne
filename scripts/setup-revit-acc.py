@@ -389,7 +389,7 @@ def resolve_cloudflared(runtime):
 
 
 @contextmanager
-def quick_tunnel(runtime):
+def quick_tunnel(runtime, revit=False):
     cloudflared = resolve_cloudflared(runtime)
     relay_script = Path(__file__).with_name('forward-revit-aps.py')
     with TemporaryDirectory(prefix='sonne-acc-') as temp:
@@ -398,7 +398,7 @@ def quick_tunnel(runtime):
         tunnel_config = Path(temp) / 'cloudflared.yml'
         tunnel_config.write_text('{}\n', encoding='utf-8')
         print('Starting the local relay and Cloudflare Quick Tunnel.', flush=True)
-        with running_process([sys.executable, str(relay_script), '--port', '0'], relay_log) as relay:
+        with running_process([sys.executable, str(relay_script), '--port', '0', *(['--revit'] if revit else [])], relay_log) as relay:
             local = wait_for_address('Webhook relay', relay, relay_log, RELAY_ORIGIN, 10)
             command = [cloudflared, 'tunnel', '--config', str(tunnel_config), '--no-autoupdate', '--url', local]
             with running_process(command, tunnel_log) as tunnel:
@@ -481,10 +481,16 @@ def deliver_enrollment(enrollment, checkout):
     target = directory / 'config.json'
     display = windows_path(target)
     location = enrollment.with_suffix('.windows-path')
+    updated = None
     if target.exists():
-        write_private(location, windows_path(checkout) + '\n')
-        print(f'Using existing Windows client configuration: {display}', flush=True)
-        return
+        existing = json.loads(target.read_text(encoding='utf-8-sig'))
+        incoming = json.loads(enrollment.read_text())
+        if existing.get('token') != incoming['token']:
+            raise SetupError('The Windows client is enrolled with another token. Select its matching checkout.')
+        if existing.get('url') == incoming['url']:
+            write_private(location, windows_path(checkout) + '\n')
+            return
+        updated = {**existing, 'url': incoming['url']}
 
     # Windows permissions on a mounted drive are controlled by NTFS.
     # Restrict an empty file before copying the token, then publish it atomically.
@@ -498,6 +504,12 @@ def deliver_enrollment(enrollment, checkout):
         subprocess.run(['icacls.exe', windows_path(temp), '/inheritance:r', '/grant:r',
                         '*' + sid[0].decode('ascii') + ':F', '*S-1-5-18:F'],
                        check=True, stdout=subprocess.DEVNULL)
+        if updated is not None:
+            temp.write_text(json.dumps(updated, indent=2), encoding='utf-8')
+            os.replace(temp, target)
+            write_private(location, windows_path(checkout) + '\n')
+            print('Revit tunnel URL updated. Restart the Windows client to reconnect.', flush=True)
+            return
         shutil.copyfile(enrollment, temp)
         try:
             os.link(temp, target)
@@ -510,7 +522,7 @@ def deliver_enrollment(enrollment, checkout):
     print(f'Installed Windows client configuration: {display}', flush=True)
 
 
-def prepare_revit(runtime, local):
+def prepare_revit(runtime, local, url):
     if not all((runtime / name).is_file() for name in ('.env', 'compose.yaml', 'compose.prompt-studio.yaml')):
         raise SetupError('Install Sonne and Prompt Studio before configuring ACC.')
     if local.exists():
@@ -534,9 +546,6 @@ def prepare_revit(runtime, local):
     if not isinstance(worker, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', worker):
         raise SetupError('The publication worker must be a valid Revit client ID.')
     enrollment = runtime / '.state/revit-hub' / f'enroll-{worker}.json'
-    previous = json.loads(enrollment.read_text(encoding='utf-8'))['url'] if enrollment.is_file() else ''
-    default = ' [Enter to reuse the existing URL]' if previous else ''
-    url = input(f'Windows-facing Revit router HTTPS URL ending in /revit/{default}: ').strip() or previous
     parts = urlsplit(url)
     if (parts.scheme != 'https' or not parts.hostname or parts.username or parts.password or
             parts.query or parts.fragment or not parts.path.endswith('/revit/') or any(c.isspace() for c in url)):
@@ -567,16 +576,18 @@ def setup(args):
         print('Sonne is serving the local RVT history.')
         return
     local = state / 'revit-publications' / 'config.json'
-    if args.install:
-        config = prepare_revit(runtime, local)
-    else:
+    if not args.install:
         if not local.is_file() or not (runtime / 'compose.revit.yaml').is_file():
             raise SetupError('Set up the local room publication check first or run the installer with --with-acc.')
         config = json.loads(local.read_text(encoding='utf-8'))
         if config['source'] != 'local':
             raise SetupError('The original room publication configuration must use the local source.')
     if args.auto or args.install:
-        with quick_tunnel(runtime) as (callback, processes):
+        with quick_tunnel(runtime, revit=True) if args.install else quick_tunnel(runtime) as (callback, processes):
+            if args.install:
+                router = callback.removesuffix('/aps/publish') + '/revit/'
+                print(f'Revit client URL: {router}', flush=True)
+                config = prepare_revit(runtime, local, router)
             configure_acc(runtime, config, callback)
             try:
                 watch_publications(runtime, processes)

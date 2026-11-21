@@ -47,7 +47,7 @@ class AutomaticAccTests(unittest.TestCase):
     def test_tunnel_uses_the_running_relay_and_cleans_up_both_processes(self):
         announce = "print('https://test-snowdon.trycloudflare.com', flush=True)"
         with self.fake_quick_tunnel(announce + "\nimport time\ntime.sleep(30)") as (children, origins):
-            with acc.quick_tunnel(ROOT) as (url, _):
+            with acc.quick_tunnel(ROOT, revit=True) as (url, _):
                 self.assertEqual(url, "https://test-snowdon.trycloudflare.com/aps/publish")
                 self.assertEqual(len(origins), 1)
                 opener = build_opener(ProxyHandler({}))
@@ -57,6 +57,11 @@ class AutomaticAccTests(unittest.TestCase):
                 self.assertEqual(denied.exception.code, 401)
                 self.assertEqual(denied.exception.headers["X-Sonne-Publish-Relay"], "1")
                 denied.exception.close()
+                for path, status in (('/revit/register', 401), ('/revit/call', 404)):
+                    with self.assertRaises(HTTPError) as blocked:
+                        opener.open(Request(origins[0] + path, data=b'{}'), timeout=3)
+                    self.assertEqual(blocked.exception.code, status)
+                    blocked.exception.close()
                 self.assertTrue(all(process.poll() is None for process in children))
             self.assertEqual(len(children), 2)
             self.assertTrue(all(process.poll() is not None for process in children))
@@ -125,9 +130,9 @@ class IntegratedAccTests(unittest.TestCase):
         args = SimpleNamespace(runtime=self.runtime, status=False, local=False, auto=False, install=True)
 
         @contextmanager
-        def tunnel(runtime):
+        def tunnel(runtime, revit=False):
             self.assertEqual(runtime, self.runtime)
-            self.assertTrue(self.local.is_file())
+            self.assertTrue(revit)
             steps.tunnel()
             yield callback, {}
 
@@ -139,11 +144,11 @@ class IntegratedAccTests(unittest.TestCase):
                     acc.setup(args)
         deliver.assert_called_once_with(self.runtime / '.state/revit-hub/enroll-windows-01.json', ROOT)
         config = json.loads(self.local.read_text(encoding='utf-8'))
-        self.assertEqual([call[0] for call in steps.mock_calls], ['provision', 'tunnel', 'configure', 'watch'])
+        self.assertEqual([call[0] for call in steps.mock_calls], ['tunnel', 'provision', 'configure', 'watch'])
         provision = steps.provision.call_args.args[0]
         self.assertEqual(Path(provision[1]).name, 'setup-revit-server.sh')
         self.assertEqual(provision[2:], [
-            str(self.runtime), 'https://sonne.example.com/revit/', 'windows-01',
+            str(self.runtime), 'https://snowdon.trycloudflare.com/revit/', 'windows-01',
             'Revit windows-01', '--enable-publications',
         ])
         steps.configure.assert_called_once_with(self.runtime, config, callback)
@@ -161,7 +166,7 @@ class IntegratedAccTests(unittest.TestCase):
             '{"url":"https://existing.example.com/revit/"}', encoding='utf-8',
         )
         with patch('builtins.input', return_value=''), patch.object(acc.subprocess, 'run') as provision, patch.object(acc, 'deliver_enrollment'):
-            self.assertEqual(acc.prepare_revit(self.runtime, self.local), config)
+            self.assertEqual(acc.prepare_revit(self.runtime, self.local, 'https://existing.example.com/revit/'), config)
         self.assertEqual(provision.call_args.args[0][3:5], ['https://existing.example.com/revit/', 'design-pc'])
         self.assertEqual(self.local.read_bytes(), before)
 
@@ -170,7 +175,7 @@ class IntegratedAccTests(unittest.TestCase):
         temp = acc.subprocess.check_output(['cmd.exe', '/u', '/d', '/c', 'echo %TEMP%']).decode('utf-16-le').strip()
         parent = acc.subprocess.check_output(['wslpath', '-u', temp], text=True).strip()
         enrollment = self.runtime / 'enroll.json'
-        enrollment.write_text('{"token":"fixture-token"}')
+        enrollment.write_text('{"token":"fixture-token","url":"https://new.example/revit/"}')
         with TemporaryDirectory(dir=parent, prefix='Sonne enrollment ') as folder:
             checkout = Path(folder)
             (checkout / 'scripts').mkdir()
@@ -181,9 +186,10 @@ class IntegratedAccTests(unittest.TestCase):
             win_target = acc.subprocess.check_output(['wslpath', '-w', str(target)], text=True).strip()
             acl = acc.subprocess.check_output(['icacls.exe', win_target])
             self.assertNotIn(b'(I)', acl)
-            target.write_text('{"command":"node","token":"existing"}')
+            target.write_text('{"command":"node","token":"fixture-token","url":"https://old.example/revit/"}')
             acc.deliver_enrollment(enrollment, checkout)
             self.assertEqual(json.loads(target.read_text())['command'], 'node')
+            self.assertEqual(json.loads(target.read_text())['url'], 'https://new.example/revit/')
             self.assertEqual(list(target.parent.iterdir()), [target])
 
     def test_deploy_keeps_the_selected_archive_directory_when_docker_needs_sudo(self):

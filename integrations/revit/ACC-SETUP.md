@@ -97,9 +97,11 @@ the installer.
 The installer sets up the local model, Discord, Prompt Studio, and the Revit
 router. It keeps the configured publication worker, schedule and brief if
 they already exist. A fresh install uses the Snowdon test schedule in step 4.
-Enter the HTTPS URL that the Windows client will use, ending in `/revit/`.
-For an existing enrollment, press Enter to reuse its URL. For a new endpoint,
-[configure the HTTPS route](README.md#linux-server) to the private router port.
+The installer starts a Cloudflare Quick Tunnel and puts its HTTPS `/revit/` URL
+in the Windows enrollment. Keep the installer terminal open while using it.
+Each new tunnel gets a new hostname. Restart the Windows client after setup
+updates its URL. On a separate workstation, copy the new `url` value into the
+existing client configuration before restarting it.
 
 On WSL the installer copies the enrollment into the Windows checkout at
 `.state/revit-client/config.json` and preserves an existing client configuration.
