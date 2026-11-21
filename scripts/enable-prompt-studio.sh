@@ -114,7 +114,16 @@ private_write(accounts_path, json.dumps({'version': 1, 'users': [{'id': user, 'n
 (runtime/'workspace/files/prompt-studio/shared/.sonne-memory').mkdir(parents=True, exist_ok=True, mode=0o700)
 private_write(state/'active/users.json', json.dumps(ids) + '\n')
 plugin = runtime/'.state/openclaw/extensions/sonne-personal-prompts'
-shutil.copytree(source/'prototypes/prompt-studio/openclaw-plugin', plugin, dirs_exist_ok=True)
+# Windows checkouts can report mode 0777. Install code with Linux permissions.
+if plugin.is_symlink() or plugin.parent.is_symlink():
+    raise SystemExit('Refusing a linked OpenClaw plugin directory.')
+plugin.mkdir(parents=True, exist_ok=True, mode=0o755)
+plugin.chmod(0o755)
+for asset in (source/'prototypes/prompt-studio/openclaw-plugin').iterdir():
+    private_write(plugin/asset.name, asset.read_text(encoding='utf-8'))
+    (plugin/asset.name).chmod(0o644)
+if plugin.stat().st_mode & 0o022 or any((plugin/name).stat().st_mode & 0o022 for name in ('index.mjs', 'openclaw.plugin.json', 'package.json')):
+    raise SystemExit('Plugin permissions are still writable by other users. Use a Linux filesystem for the Sonne runtime.')
 before = json.dumps(config, sort_keys=True)
 defaults['bootstrapMaxChars'] = max(40000, defaults.get('bootstrapMaxChars', 0))
 defaults['bootstrapTotalMaxChars'] = max(80000, defaults.get('bootstrapTotalMaxChars', 0))
