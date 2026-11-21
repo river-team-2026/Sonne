@@ -12,11 +12,11 @@ MCP catalog, with model reads and explicitly enabled, guarded model editing.
 
 ## Automated installation
 
-For Ubuntu 22.04/24.04 or Debian 13, amd64 or ARM64, use the
+For Ubuntu, an Ubuntu-based distribution, or Debian 13, amd64 or ARM64, use the
 [illustrated English PDF](output/pdf/sonne-auto-setup.pdf)
 ([LaTeX source](docs/guide-auto.tex)) to create your Discord bot, collect its
 bot token, OAuth2 Client Secret and IDs, and register the web sign-in redirect.
-Ubuntu 22.04 uses Docker's `jammy` repository; 24.04 uses `noble`.
+Setup reuses Docker with Compose v2 when available. Otherwise it uses the Ubuntu base codename for Docker packages and tries the distribution packages if Docker has no repository for that release.
 Configuration preparation was tested on Ubuntu 22.04; full inference on that
 release has not been validated.
 Then run in the Linux terminal as your normal user:
@@ -204,7 +204,7 @@ and your own bot token. See [validation status](docs/validation.md).
 
 ## Prerequisites
 
-- An installed Ubuntu 22.04/24.04 LTS or Debian 13 system, amd64 or ARM64, and a normal non-root
+- An installed Ubuntu, Ubuntu-based, or Debian 13 system, amd64 or ARM64, and a normal non-root
   Linux user with sudo access. Docker, Git and Python installation is included.
 - An otherwise lightly loaded machine with approximately 8 GiB RAM and 15 GiB
   free disk for Qwen, or 16 GiB RAM and 20 GiB free disk for Gemma. These allowances

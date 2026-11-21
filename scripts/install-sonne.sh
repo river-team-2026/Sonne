@@ -21,7 +21,7 @@ while (($#)); do
     --with-acc) WITH_ACC=1; shift ;;
     --help|-h)
       printf '%s\n' 'Usage: bash install-sonne.sh [--model qwen|gemma] [--dir PATH] [--env-file FILE] [--prepare-only | --with-acc]' \
-        'Ubuntu 22.04/24.04 or Debian 13; amd64 or arm64; run as a normal user.' \
+        'Ubuntu, Ubuntu-based distributions or Debian 13; amd64 or arm64; run as a normal user.' \
         'qwen: Qwen3.5 2B Q4_K_M, approximately 8 GiB host RAM (default).' \
         'gemma: Gemma 4 E2B IT QAT, approximately 16 GiB host RAM.' \
         'First interactive run offers a model menu; later runs keep the saved choice.' \
@@ -47,11 +47,10 @@ trap 'printf "Setup stopped. Review the error above, fix it, then re-run this sc
 [[ $(id -u) != 0 ]] || die 'Run without sudo; the script requests sudo when needed.'
 [[ -r /etc/os-release ]] || die 'Cannot identify the operating system.'
 . /etc/os-release
-case "$ID:${VERSION_ID:-}" in
-  ubuntu:22.04) SUITE=jammy ;;
-  ubuntu:24.04) SUITE=noble ;;
-  debian:13|debian:13.*) SUITE=trixie ;;
-  *) die 'Supported targets: Ubuntu 22.04/24.04 LTS and Debian 13.' ;;
+case " $ID ${ID_LIKE:-} " in
+  *' ubuntu '*) DOCKER_OS=ubuntu; SUITE=${UBUNTU_CODENAME:-${VERSION_CODENAME:-}} ;;
+  *) [[ $ID == debian && ${VERSION_ID:-} == 13* ]] || die 'Use Ubuntu, an Ubuntu-based distribution or Debian 13.'
+     DOCKER_OS=debian; SUITE=trixie ;;
 esac
 ARCH=$(dpkg --print-architecture)
 [[ $ARCH == amd64 || $ARCH == arm64 ]] || die 'Only amd64 and arm64 are supported.'
@@ -109,23 +108,27 @@ else
   sudo apt-get update
   sudo apt-get install -y ca-certificates curl git nano python3 procps ripgrep openssh-client
   if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then
-    for package in docker.io docker-compose docker-compose-v2 docker-doc podman-docker containerd runc; do
-      [[ $(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true) != 'install ok installed' ]] || \
-        die "Conflicting package: $package. Review Docker's official instructions before proceeding."
-    done
-    sudo install -m 0755 -d /etc/apt/keyrings
-    sudo curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
-    sudo chmod a+r /etc/apt/keyrings/docker.asc
-    sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF_DOCKER
+    if [[ -z $SUITE ]] || ! curl -fsSL -o /dev/null "https://download.docker.com/linux/$DOCKER_OS/dists/$SUITE/Release"; then
+      sudo apt-get install -y docker.io docker-compose-v2 || die 'Install Docker with Compose v2 for this distribution, then rerun setup.'
+    else
+      for package in docker.io docker-compose docker-compose-v2 docker-doc podman-docker containerd runc; do
+        [[ $(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true) != 'install ok installed' ]] || \
+          die "Conflicting package: $package. Review Docker's official instructions before proceeding."
+      done
+      sudo install -m 0755 -d /etc/apt/keyrings
+      sudo curl -fsSL "https://download.docker.com/linux/$DOCKER_OS/gpg" -o /etc/apt/keyrings/docker.asc
+      sudo chmod a+r /etc/apt/keyrings/docker.asc
+      sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF_DOCKER
 Types: deb
-URIs: https://download.docker.com/linux/$ID
+URIs: https://download.docker.com/linux/$DOCKER_OS
 Suites: $SUITE
 Components: stable
 Architectures: $ARCH
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF_DOCKER
-    sudo apt-get update
-    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      sudo apt-get update
+      sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    fi
     sudo systemctl enable --now docker
   fi
   DOCKER=(docker)
