@@ -12,7 +12,7 @@ function navigationKey(url) {
 
 export function validateAps(config) {
   if (!config || !/^b\.[a-f0-9-]{36}$/i.test(config.project_id) ||
-      !/^urn:adsk\.wipprod:dm\.lineage:[\w-]{1,200}$/.test(config.lineage_urn) ||
+      !/^urn:adsk\.wip(?:prod|emea):dm\.lineage:[\w-]{1,200}$/.test(config.lineage_urn) ||
       !/^[\w-]{1,100}$/.test(config.hook_id) || typeof config.webhook_secret !== 'string' ||
       config.webhook_secret.length < 32 || !Number.isSafeInteger(config.first_version) || config.first_version < 1)
     throw publicationError('Configure the APS project, model lineage, publish hook, signature key and first version.');
@@ -32,7 +32,7 @@ export function acceptPublishHook(raw, signature, config) {
   for (const [key, value] of Object.entries(body.payload ?? {})) {
     if (/^(lineageUrn|itemId|itemUrn|resourceUrn|urn)$/i.test(key)) candidates.push(value);
   }
-  const lineage = candidates.find(urn => typeof urn === 'string' && /^urn:adsk\.wipprod:dm\.lineage:/i.test(urn));
+  const lineage = candidates.find(urn => typeof urn === 'string' && /^urn:adsk\.wip(?:prod|emea):dm\.lineage:/i.test(urn));
   return !lineage || lineage.split('?')[0].toLowerCase() === config.lineage_urn.toLowerCase();
 }
 
@@ -77,7 +77,7 @@ export function createApsSource(config, directory, fetcher = fetch) {
           if (item.attributes?.extension?.type !== 'versions:autodesk.bim360:C4RModel') continue;
           const n = item.attributes.versionNumber;
           if (!Number.isSafeInteger(n) || n < config.first_version) continue;
-          if (typeof item.id !== 'string' || !/^urn:adsk\.wipprod:fs\.file:vf\.[\w-]+\?version=\d+$/.test(item.id) ||
+          if (typeof item.id !== 'string' || !/^urn:adsk\.wip(?:prod|emea):fs\.file:vf\.[\w-]+\?version=\d+$/.test(item.id) ||
               Number(new URLSearchParams(item.id.split('?')[1]).get('version')) !== n ||
               (item.relationships?.item?.data?.id && item.relationships.item.data.id !== config.lineage_urn))
             throw publicationError('APS returned a version outside the configured model.', 502);

@@ -23,6 +23,14 @@ spec.loader.exec_module(acc)
 
 
 class AutomaticAccTests(unittest.TestCase):
+    def test_european_folder_url(self):
+        project = '559201f1-444a-4c5a-80fa-e2f851297d3b'
+        folder = 'urn:adsk.wipemea:fs.folder:co.Pilot'
+        link = f'https://acc.autodesk.eu/docs/files/projects/{project}?folderUrn=urn%3Aadsk.wipemea%3Afs.folder%3Aco.Pilot'
+        self.assertEqual(acc.model_ids(link), (project, folder, ''))
+        self.assertTrue(acc.FOLDER.fullmatch(folder))
+        self.assertTrue(acc.LINEAGE.fullmatch('urn:adsk.wipemea:dm.lineage:Pilot'))
+
     @contextmanager
     def fake_quick_tunnel(self, code):
         processes = []

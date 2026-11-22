@@ -32,8 +32,8 @@ CALLBACK = 'http://localhost:8765/aps/oauth/callback'
 HOOK_PATH = '/webhooks/v1/systems/adsk.c4r/events/model.publish/hooks'
 UUID = r'[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}'
 PROJECT = re.compile(r'(?:b\.)?(' + UUID + r')')
-LINEAGE = re.compile(r'urn:adsk\.wipprod:dm\.lineage:[\w-]{1,200}', re.ASCII)
-FOLDER = re.compile(r'urn:adsk\.wipprod:fs\.folder:co\.[\w-]{1,200}', re.ASCII)
+LINEAGE = re.compile(r'urn:adsk\.wip(?:prod|emea):dm\.lineage:[\w-]{1,200}', re.ASCII)
+FOLDER = re.compile(r'urn:adsk\.wip(?:prod|emea):fs\.folder:co\.[\w-]{1,200}', re.ASCII)
 REGIONS = ('US', 'EMEA', 'AUS', 'CAN', 'DEU', 'IND', 'JPN', 'GBR')
 CLOUD_VERSION = 'versions:autodesk.bim360:C4RModel'
 RELAY_ORIGIN = re.compile(r'APS webhook relay listening on (http://127\.0\.0\.1:\d+)/aps/publish')
@@ -142,7 +142,7 @@ class Model:
 
 def model_ids(link):
     url = urlsplit(link)
-    if url.scheme != 'https' or not (url.hostname or '').endswith('.autodesk.com'):
+    if url.scheme != 'https' or not ((url.hostname or '').endswith('.autodesk.com') or url.hostname == 'acc.autodesk.eu'):
         raise SetupError('Use an Autodesk Forma/ACC browser URL for the model or its folder.')
     query = parse_qs(url.query)
     project = re.search(r'/projects/(' + UUID + r')(?=/|$)', url.path)
