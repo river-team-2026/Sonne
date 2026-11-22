@@ -23,6 +23,17 @@ spec.loader.exec_module(acc)
 
 
 class AutomaticAccTests(unittest.TestCase):
+    def test_folder_catalog_lists_all_file_types_across_pages(self):
+        project, folder = 'b.project', 'urn:adsk.wipemea:fs.folder:co.Pilot'
+        next_url = acc.APS + '/data/v1/projects/b.project/folders/' + acc.quote(folder, safe='') + '/contents?page=2'
+        def file(key, name):
+            return {'type': 'items', 'id': key, 'attributes': {'displayName': name}}
+        pages = [({'data': [file('1', 'Plan.rvt'), {'type': 'folders'}],
+                   'links': {'next': {'href': next_url}}}, {}), ({'data': [file('2', 'Brief.pdf')]}, {})]
+        with patch.object(acc, 'aps_request', side_effect=pages):
+            files = acc.folder_catalog(project, folder, 'fake')
+        self.assertEqual([item['name'] for item in files], ['Brief.pdf', 'Plan.rvt'])
+
     def test_european_folder_url(self):
         project = '559201f1-444a-4c5a-80fa-e2f851297d3b'
         folder = 'urn:adsk.wipemea:fs.folder:co.Pilot'
@@ -114,6 +125,7 @@ class AutomaticAccTests(unittest.TestCase):
             (runtime / "compose.revit.yaml").touch()
             args = SimpleNamespace(runtime=runtime, status=False, local=False, auto=True, install=False)
             steps = Mock()
+            steps.configure.return_value = None
             steps.watch.side_effect = KeyboardInterrupt
             with patch.multiple(acc, quick_tunnel=tunnel, configure_acc=steps.configure, watch_publications=steps.watch):
                 acc.setup(args)
@@ -145,6 +157,7 @@ class IntegratedAccTests(unittest.TestCase):
             yield callback, {}
 
         steps = Mock()
+        steps.configure.return_value = None
         steps.watch.side_effect = KeyboardInterrupt
         with patch('builtins.input', return_value='https://sonne.example.com/revit/'):
             with patch.object(acc.subprocess, 'run', steps.provision), patch.object(acc, 'deliver_enrollment') as deliver:

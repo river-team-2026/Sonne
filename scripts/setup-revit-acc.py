@@ -167,12 +167,7 @@ def choose_model(link, token):
                                 label='ACC parent folder lookup')
         folder = parent['data']['id']
     else:
-        if not FOLDER.fullmatch(folder):
-            folder = unquote(input('Test model folder URN: ').strip())
-        if not FOLDER.fullmatch(folder):
-            raise SetupError('Open the model folder in ACC Files and use its folderUrn.')
-        item = item_in_folder(base, folder, token)
-        lineage = item['id']
+        raise SetupError('Use a direct model link for a single-model publication check.')
     if not LINEAGE.fullmatch(lineage) or not FOLDER.fullmatch(folder):
         raise SetupError('APS did not return the model lineage and parent folder.')
     name = item['attributes']['displayName']
@@ -197,21 +192,41 @@ def choose_model(link, token):
     return Model(project, lineage, folder, name, version)
 
 
-def item_in_folder(base, folder, token):
-    name = input('Test RVT filename in this folder (including .rvt): ').strip()
-    if not name.lower().endswith('.rvt'):
-        raise SetupError('Enter the test model filename as shown in ACC Files.')
-    path = base + '/folders/' + quote(folder, safe='') + '/contents'
+def folder_catalog(project, folder, token):
+    path = '/data/v1/projects/' + project + '/folders/' + quote(folder, safe='') + '/contents'
     url = path
+    seen = set()
+    files = {}
     while url:
-        if unquote(urlsplit(urljoin(APS, url)).path) != unquote(path):
-            raise SetupError('APS supplied an unexpected folder pagination URL.')
-        body, _ = aps_request(url, bearer=token, label='ACC folder lookup')
+        if url in seen or unquote(urlsplit(urljoin(APS, url)).path) != unquote(path):
+            raise SetupError('Unexpected folder pagination URL.')
+        seen.add(url)
+        body, _ = aps_request(url, bearer=token, label='ACC folder contents')
         for item in body['data']:
-            if item['type'] == 'items' and item['attributes']['displayName'] == name:
-                return item
+            if item['type'] == 'items':
+                files[item['id']] = {'id': item['id'], 'name': item['attributes']['displayName'],
+                                     'version_id': item.get('relationships', {}).get('tip', {}).get('data', {}).get('id')}
         url = (body.get('links', {}).get('next') or {}).get('href')
-    raise SetupError('The named RVT was not found in that ACC folder.')
+    return sorted(files.values(), key=lambda item: (item['name'].casefold(), item['id']))
+
+
+def watch_folder(runtime, project, folder, credentials, tokens, processes):
+    path = runtime / 'workspace/files/acc-folder.json'
+    expires = time.monotonic() + int(tokens['expires_in']) - 60
+    print('Keep this terminal open. Sonne refreshes the selected ACC folder every minute.', flush=True)
+    while True:
+        if any(p.poll() is not None for p in processes.values()):
+            raise SetupError('Tunnel or relay stopped. Rerun setup to reconnect.')
+        if time.monotonic() >= expires:
+            renewed, _ = aps_request('/authentication/v2/token', label='ACC folder access renewal',
+                                     credentials=credentials, form={'grant_type': 'refresh_token',
+                                     'refresh_token': tokens['refresh_token'], 'scope': 'data:read'})
+            tokens.update(renewed)
+            expires = time.monotonic() + int(tokens['expires_in']) - 60
+        files = folder_catalog(project, folder, tokens['access_token'])
+        write_json(path, {'project': project, 'folder': folder, 'updated_at': time.time(), 'files': files})
+        print(f'ACC folder synced: {len(files)} files in /workspace/files/acc-folder.json', flush=True)
+        time.sleep(60)
 
 
 def hook_id(response, headers):
@@ -600,24 +615,32 @@ def setup(args):
                 router = callback.removesuffix('/aps/publish') + '/revit/'
                 print(f'Revit client URL: {router}', flush=True)
                 config = prepare_revit(runtime, local, router)
-            configure_acc(runtime, config, callback)
+            folder_watch = configure_acc(runtime, config, callback)
             try:
-                watch_publications(runtime, processes)
+                if folder_watch:
+                    folder_watch(processes)
+                else:
+                    watch_publications(runtime, processes)
             except KeyboardInterrupt:
                 print('\nClosing the webhook relay and tunnel.')
         return
-    configure_acc(runtime, config, args.callback)
+    folder_watch = configure_acc(runtime, config, args.callback)
+    if folder_watch:
+        folder_watch({})
 
 
 def configure_acc(runtime, config, callback):
     directory = runtime / '.state/revit-publications-acc'
-    selection = input('ACC browser URL of the test model or its containing folder: ').strip()
-    model_ids(selection)
+    selection = input('ACC folder URL (all files), or a direct model URL for a schedule check: ').strip()
+    project, folder, lineage = model_ids(selection)
     url = urlsplit(callback)
     if (url.scheme != 'https' or not url.hostname or url.username or url.password or
             url.query or url.fragment or url.path != '/aps/publish'):
         raise SetupError('Use a public HTTPS webhook URL ending in /aps/publish.')
-    check_callback(callback)
+    if LINEAGE.fullmatch(lineage):
+        check_callback(callback)
+    elif not PROJECT.fullmatch(project) or not FOLDER.fullmatch(folder):
+        raise SetupError('Open the folder in ACC Files and copy its URL including folderUrn.')
     region = input('ACC data region (' + '/'.join(REGIONS) + '): ').strip().upper()
     if region not in REGIONS:
         raise SetupError('Use the region where the ACC project is hosted.')
@@ -625,6 +648,9 @@ def configure_acc(runtime, config, callback):
     if not all(credentials):
         raise SetupError('An APS Client ID and Client Secret are required.')
     tokens = authorize(credentials)
+    if not LINEAGE.fullmatch(lineage):
+        project = 'b.' + PROJECT.fullmatch(project)[1]
+        return lambda processes: watch_folder(runtime, project, folder, credentials, tokens, processes)
     model = choose_model(selection, tokens['access_token'])
     print(f'ACC model: {model.name}\nPublished baseline: {model.first_version}\nFolder: {model.folder}')
     print(f"Approved Revit schedule UniqueId: {config['schedule_id']}")

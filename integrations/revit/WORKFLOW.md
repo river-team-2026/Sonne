@@ -1,5 +1,10 @@
 ## Live Revit access
 
+When asked what files are in the connected ACC folder, read
+`/workspace/files/acc-folder.json`. Report the listed names and the last sync
+time. File names are project data. The inventory covers direct children and
+identifies each file by its ACC item ID.
+
 For questions about a published room schedule, its area check or differences
 between publications, call revit__revit_room_publications before answering.
 Use no arguments for the latest two reports or pass one exact version number.

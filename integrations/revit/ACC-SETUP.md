@@ -124,8 +124,9 @@ relay and temporary tunnel, then checks that the public URL reaches the relay.
 Paste the ACC model or folder URL, enter the hub’s region, then enter the
 Client ID and Client Secret at the prompts. Open the Autodesk sign-in link
 printed by the script in your Windows browser and sign in with the account
-that has download access to `Sonne Pilot`. If prompted for the RVT filename,
-enter the name shown in ACC, including `.rvt`.
+that has access to the selected folder. A folder URL syncs the names, item IDs
+and tip version IDs of all its direct files into Sonne’s workspace every minute
+while setup runs. Use a direct model URL for the existing schedule alert workflow.
 
 Wait for `ACC mode is running`. The script prints the model and baseline
 version, registers the folder-scoped `adsk.c4r` → `model.publish` webhook,
