@@ -99,11 +99,13 @@ router. It keeps the configured publication worker, schedule and brief if
 they already exist. A fresh install uses the Snowdon test schedule in step 4.
 The installer starts a Cloudflare Quick Tunnel and puts its HTTPS `/revit/` URL
 in the Windows enrollment. After interactive setup the sync and tunnel detach
-into a tmux session. The terminal can close; the Linux host or WSL instance
-must stay running. After shutdown, rerun setup to renew the session and URL.
-Each new tunnel gets a new hostname. Restart the Windows client after setup
-updates its URL. On a separate workstation, copy the new `url` value into the
-existing client configuration before restarting it.
+into a tmux session. Folder mode also registers automatic recovery. On native
+Linux the user systemd service starts at boot. On Windows a per-user scheduled
+task starts WSL at sign-in. Both renew the APS access token, create a fresh
+Revit tunnel and write its URL into managed enrollments. The current Windows
+client rereads its local enrollment when reconnecting. For a workstation on
+another computer, deliver the new URL separately or use a permanent router.
+Revoked or expired Autodesk authorization requires a new interactive sign-in.
 
 On WSL the installer copies the enrollment into the Windows checkout at
 `.state/revit-client/config.json` and preserves an existing client configuration.

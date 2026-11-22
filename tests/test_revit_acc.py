@@ -23,6 +23,30 @@ spec.loader.exec_module(acc)
 
 
 class AutomaticAccTests(unittest.TestCase):
+    def test_resume_rotates_managed_url_and_reuses_saved_authorization(self):
+        with TemporaryDirectory() as tmp:
+            runtime = Path(tmp)
+            saved = runtime / '.state/acc-startup/folder.json'
+            saved.parent.mkdir(parents=True)
+            saved.write_text(json.dumps(dict(project='project', folder='folder', region='EMEA',
+                                             credentials=['id', 'secret'], refresh_token='refresh')))
+            enroll = runtime / '.state/revit-hub/enroll-client.json'
+            enroll.parent.mkdir()
+            enroll.write_text('{"token":"fixture","url":"https://old.trycloudflare.com/revit/"}')
+            other = enroll.with_name('enroll-permanent.json')
+            other.write_text('{"url":"https://example.com/revit/"}')
+            @contextmanager
+            def tunnel(runtime, revit):
+                self.assertTrue(revit)
+                yield 'https://new.trycloudflare.com/aps/publish', {}
+            with patch.object(acc, 'quick_tunnel', tunnel), patch.object(acc, 'watch_folder') as watch:
+                acc.resume_folder(runtime)
+            self.assertEqual(json.loads(enroll.read_text()), dict(token='fixture', url='https://new.trycloudflare.com/revit/'))
+            self.assertEqual(json.loads(other.read_text())['url'], 'https://example.com/revit/')
+            self.assertEqual(watch.call_args.args[4], dict(expires_in=0, refresh_token='refresh'))
+            with acc.folder_lock(saved.parent), self.assertRaises(acc.SetupError):
+                acc.resume_folder(runtime)
+
     def test_folder_content_download_cache_and_deletion(self):
         item = {'name': 'Brief.md', 'id': 'lineage', 'version_id': 'version'}
         version = {'data': {'id': 'version', 'relationships': {'item': {'data': {'id': 'lineage'}},

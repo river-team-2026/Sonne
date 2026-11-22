@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import fcntl
 from contextlib import contextmanager
 from dataclasses import dataclass
 from errno import EADDRINUSE
@@ -13,9 +14,11 @@ import json
 import os
 from pathlib import Path
 import platform
+import pwd
 import re
 import shlex
 import secrets
+import signal
 import shutil
 import subprocess
 import sys
@@ -291,7 +294,7 @@ def detach_sync():
         subprocess.run(['tmux', '-L', 'sonne-acc', 'detach-client', '-s', session], check=False)
 
 
-def watch_folder(runtime, project, folder, credentials, tokens, processes, region):
+def watch_folder(runtime, project, folder, credentials, tokens, processes, region, saved=None):
     path = runtime / 'workspace/files/acc-folder.json'
     expires = time.monotonic() + int(tokens['expires_in']) - 60
     first = True
@@ -304,6 +307,9 @@ def watch_folder(runtime, project, folder, credentials, tokens, processes, regio
                                          credentials=credentials, form={'grant_type': 'refresh_token',
                                          'refresh_token': tokens['refresh_token'], 'scope': 'data:read'})
                 tokens.update(renewed)
+                if saved is not None:
+                    saved['refresh_token'] = tokens['refresh_token']
+                    write_json(runtime / '.state/acc-startup/folder.json', saved)
                 expires = time.monotonic() + int(tokens['expires_in']) - 60
             files = folder_catalog(project, folder, tokens['access_token'])
             stale = sync_documents(path.parent, project, files, tokens['access_token'], region)
@@ -681,8 +687,117 @@ def prepare_revit(runtime, local, url):
     return config
 
 
+@contextmanager
+def folder_lock(directory):
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (directory / 'worker.lock').open('a+') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SetupError('ACC folder sync is already running for this installation.') from None
+        lock.seek(0)
+        lock.truncate()
+        lock.write(str(os.getpid()))
+        lock.flush()
+        yield
+
+
+def startup_registration(runtime, remove=False):
+    directory = runtime / '.state/acc-startup'
+    distro = os.environ.get('WSL_DISTRO_NAME')
+    user = pwd.getpwuid(os.getuid()).pw_name
+    key = hashlib.sha256(os.fsencode((distro or '') + '/' + user + str(runtime))).hexdigest()[:16]
+    name = 'Sonne-ACC-' + key
+    if distro:
+        helper = Path(__file__).with_name('acc-startup-task.ps1')
+        windows = subprocess.check_output(['wslpath', '-w', str(helper)], text=True).strip()
+        args = ['-Remove'] if remove else ['-Distro', distro, '-LinuxUser', user, '-Runtime', str(runtime)]
+        subprocess.run(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'RemoteSigned',
+                        '-File', windows, '-Name', name, *args], check=True)
+    else:
+        unit = Path.home() / '.config/systemd/user' / (name + '.service')
+        if remove:
+            if unit.exists():
+                subprocess.run(['systemctl', '--user', 'disable', '--now', unit.name], check=True)
+                unit.unlink()
+                subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
+            return
+        def argument(value):
+            return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%').replace('$', '$$').replace('\n', '\\n') + '"'
+        command = ' '.join(map(argument, [sys.executable, directory / 'setup-revit-acc.py',
+                                          '--runtime', runtime, '--resume-folder']))
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        write_private(unit, '[Unit]\nDescription=Sonne ACC folder sync and Revit tunnel\n'
+                      '[Service]\nUMask=0077\nExecStart=' + command +
+                      '\nRestart=on-failure\nRestartSec=30\n[Install]\nWantedBy=default.target\n')
+        subprocess.run(['sudo', 'loginctl', 'enable-linger', user], check=True)
+        subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
+        subprocess.run(['systemctl', '--user', 'enable', unit.name], check=True)
+
+
+def enable_folder_startup(runtime, project, folder, credentials, tokens, processes, region):
+    directory = runtime / '.state/acc-startup'
+    with folder_lock(directory):
+        for name in ('setup-revit-acc.py', 'forward-revit-aps.py', 'acc-startup-task.ps1'):
+            shutil.copyfile(Path(__file__).with_name(name), directory / name)
+        saved = dict(project=project, folder=folder, region=region, credentials=list(credentials),
+                     refresh_token=tokens['refresh_token'])
+        write_json(directory / 'folder.json', saved)
+        startup_registration(runtime)
+        print('Automatic ACC sync and tunnel startup registered.', flush=True)
+        watch_folder(runtime, project, folder, credentials, tokens, processes, region, saved)
+
+
+def resume_folder(runtime):
+    directory = runtime / '.state/acc-startup'
+    with folder_lock(directory):
+        saved = json.loads((directory / 'folder.json').read_text())
+        with quick_tunnel(runtime, revit=True) as (callback, processes):
+            url = callback.removesuffix('/aps/publish') + '/revit/'
+            for enrollment in (runtime / '.state/revit-hub').glob('enroll-*.json'):
+                data = json.loads(enrollment.read_text())
+                # Other workers may use their own permanent router. Only rotate
+                # enrollments created for a managed Quick Tunnel.
+                if not TUNNEL_ORIGIN.fullmatch(data['url'].removesuffix('/revit/')):
+                    continue
+                data['url'] = url
+                write_json(enrollment, data)
+                location = enrollment.with_suffix('.windows-path')
+                if location.exists() and os.environ.get('WSL_DISTRO_NAME'):
+                    try:
+                        target = location.read_text().strip()
+                        if not re.match(r'^[A-Za-z]:[\\/]', target):
+                            raise SetupError('Expected a local Windows drive path.')
+                        checkout = subprocess.check_output(['wslpath', '-u', target], text=True).strip()
+                        deliver_enrollment(enrollment, Path(checkout))
+                    except (OSError, subprocess.CalledProcessError, SetupError) as error:
+                        print(f'Could not update the Windows enrollment: {error}. Use the URL in {enrollment}.',
+                              file=sys.stderr, flush=True)
+            tokens = {'expires_in': 0, 'refresh_token': saved['refresh_token']}
+            watch_folder(runtime, saved['project'], saved['folder'], saved['credentials'],
+                         tokens, processes, saved['region'], saved)
+
+
 def setup(args):
     runtime = args.runtime.expanduser().resolve(strict=True)
+    if getattr(args, 'resume_folder', False):
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        resume_folder(runtime)
+        return
+    if getattr(args, 'disable_startup', False):
+        lock = runtime / '.state/acc-startup/worker.lock'
+        stored_pid = lock.read_text() if lock.exists() else ''
+        if stored_pid.isdigit():
+            pid = int(stored_pid)
+            try:
+                argv = (Path('/proc') / str(pid) / 'cmdline').read_bytes().split(b'\0')
+                if (os.fsencode(runtime / '.state/acc-startup/setup-revit-acc.py') in argv
+                        and b'--resume-folder' in argv and os.fsencode(runtime) in argv):
+                    os.kill(pid, signal.SIGTERM)
+            except (FileNotFoundError, ProcessLookupError):
+                pass
+        startup_registration(runtime, remove=True)
+        return
     if getattr(args, 'remove_hook', False):
         remove_saved_hook(runtime)
         return
@@ -742,7 +857,7 @@ def configure_acc(runtime, config, callback):
     tokens = authorize(credentials)
     if not LINEAGE.fullmatch(lineage):
         project = 'b.' + PROJECT.fullmatch(project)[1]
-        return lambda processes: watch_folder(runtime, project, folder, credentials, tokens, processes, region)
+        return lambda processes: enable_folder_startup(runtime, project, folder, credentials, tokens, processes, region)
     model = choose_model(selection, tokens['access_token'])
     print(f'ACC model: {model.name}\nPublished baseline: {model.first_version}\nFolder: {model.folder}')
     print(f"Approved Revit schedule UniqueId: {config['schedule_id']}")
@@ -803,6 +918,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
     mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--resume-folder', action='store_true', help='Resume the saved folder sync and Revit tunnel.')
+    mode.add_argument('--disable-startup', action='store_true', help='Remove the managed startup registration.')
     mode.add_argument('--remove-hook', action='store_true', help='Unregister the saved Sonne publication webhook.')
     mode.add_argument('--install', action='store_true', help='Provision Revit and the room check in an installed Sonne runtime, then run automatic ACC setup.')
     mode.add_argument('--auto', action='store_true', help='Start a Quick Tunnel, register the hook, and show publication status.')

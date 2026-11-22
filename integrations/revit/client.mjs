@@ -50,6 +50,10 @@ for (;;) {
   try {
     const current = await model();
     if (!sessionId) {
+      const enrollment = await readConfig(process.argv[2]);
+      if (enrollment.token === config.token && new URL(enrollment.url).protocol === 'https:') {
+        config.url = enrollment.url;
+      }
       ({sessionId} = await api(config, 'register', {tools: tools.filter(tool => enabledTools(config.enableWrites === true).includes(tool.name) || (config.enablePublications === true && tool.name === ROOM_PUBLICATION_TOOL)), writeEnabled: config.enableWrites === true, model: current}));
       console.log('Registered Windows session:', sessionId);
     }

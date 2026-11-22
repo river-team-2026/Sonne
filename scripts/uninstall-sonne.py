@@ -264,6 +264,9 @@ def run(args):
                 time.sleep(0.2)
             else:
                 raise ValueError('Stop the ACC background session before uninstalling.')
+    if (runtime / '.state/acc-startup/folder.json').is_file():
+        subprocess.run([sys.executable, SCRIPTS / 'setup-revit-acc.py', '--runtime', runtime,
+                        '--disable-startup'], check=True)
     check_acc_terminal(runtime)
     docker, resources = docker_inventory(runtime, args.purge)
     receipt = runtime / '.sonne-uninstall-started'
