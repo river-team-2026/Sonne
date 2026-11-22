@@ -98,7 +98,9 @@ The installer sets up the local model, Discord, Prompt Studio, and the Revit
 router. It keeps the configured publication worker, schedule and brief if
 they already exist. A fresh install uses the Snowdon test schedule in step 4.
 The installer starts a Cloudflare Quick Tunnel and puts its HTTPS `/revit/` URL
-in the Windows enrollment. Keep the installer terminal open while using it.
+in the Windows enrollment. After interactive setup the sync and tunnel detach
+into a tmux session. The terminal can close; the Linux host or WSL instance
+must stay running. After shutdown, rerun setup to renew the session and URL.
 Each new tunnel gets a new hostname. Restart the Windows client after setup
 updates its URL. On a separate workstation, copy the new `url` value into the
 existing client configuration before restarting it.
@@ -124,14 +126,18 @@ relay and temporary tunnel, then checks that the public URL reaches the relay.
 Paste the ACC model or folder URL, enter the hub’s region, then enter the
 Client ID and Client Secret at the prompts. Open the Autodesk sign-in link
 printed by the script in your Windows browser and sign in with the account
-that has access to the selected folder. A folder URL syncs the names, item IDs
-and tip version IDs of all its direct files into Sonne’s workspace every minute
-while setup runs. Use a direct model URL for the existing schedule alert workflow.
+that has access to the selected folder. Folder mode refreshes the inventory every
+minute and writes readable extracts to the workspace. It supports text-based
+PDFs, UTF text, Markdown, CSV, TSV, JSON and XML up to 32 MiB per source file.
+For translated RVT, DWG and IFC files it reads one model view's object hierarchy.
+The inventory records unavailable formats or downloads. Use a direct model URL
+for the schedule alert workflow. To inspect the background session use the
+attach command printed at startup. Press Ctrl+B followed by D to detach again.
 
 Wait for `ACC mode is running`. The script prints the model and baseline
 version, registers the folder-scoped `adsk.c4r` → `model.publish` webhook,
 and stores ACC history and private credentials under the Sonne runtime’s
-`.state/revit-publications-acc`. Keep the setup terminal open during the test.
+`.state/revit-publications-acc`. Monitoring continues in the background.
 It displays publication and Discord status as they change. Press **Ctrl+C**
 to close the relay and tunnel. Sonne and Prompt Studio continue running.
 

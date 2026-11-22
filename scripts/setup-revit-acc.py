@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shlex
 import secrets
 import shutil
 import subprocess
@@ -210,22 +211,113 @@ def folder_catalog(project, folder, token):
     return sorted(files.values(), key=lambda item: (item['name'].casefold(), item['id']))
 
 
-def watch_folder(runtime, project, folder, credentials, tokens, processes):
+def read_document(project, file, token, region):
+    suffix = Path(file['name']).suffix.lower()
+    if suffix in {'.rvt', '.dwg', '.ifc'} and file['version_id']:
+        urn = base64.urlsafe_b64encode(file['version_id'].encode()).decode().rstrip('=')
+        path = '/modelderivative/v2/designdata/' + urn + '/metadata'
+        views, _ = aps_request(path, bearer=token, region=region, label='ACC model views')
+        entries = views['data']['metadata']
+        view = next((v for v in entries if v.get('role') == '3d'), next(iter(entries), None))
+        if not view:
+            raise SetupError('No translated model view available.')
+        tree, _ = aps_request(path + '/' + quote(view['guid'], safe=''), bearer=token,
+                              region=region, label='ACC model object tree')
+        return json.dumps({'view': view.get('name'), 'objects': tree['data']['objects']}, ensure_ascii=False, indent=2)
+    if suffix not in {'.txt', '.md', '.csv', '.tsv', '.json', '.xml', '.pdf'}:
+        return None
+    version = file['version_id']
+    if not version:
+        raise SetupError('No downloadable version.')
+    data, _ = aps_request('/data/v1/projects/' + project + '/versions/' + quote(version, safe=''),
+                          label='ACC file version', bearer=token)
+    record = data['data']
+    if record['id'] != version or record['relationships']['item']['data']['id'] != file['id']:
+        raise SetupError('Unexpected ACC file version.')
+    urn = record['relationships']['storage']['data']['id']
+    match = re.fullmatch(r'urn:adsk.objects:os.object:([^/]+)/(.+)', urn)
+    if not match:
+        raise SetupError('No downloadable storage object.')
+    signed, _ = aps_request('/oss/v2/buckets/' + quote(match[1], safe='') + '/objects/' +
+                            quote(match[2], safe='') + '/signeds3download', label='ACC download', bearer=token)
+    url = urlsplit(signed.get('url', ''))
+    if (url.scheme != 'https' or url.username or url.password or url.port or
+            not re.search(r'(?:^|\.)s3(?:[.-][a-z0-9-]+)*\.amazonaws\.com$', url.hostname or '')):
+        raise SetupError('No direct S3 download available.')
+    limit = 32 * 1024 * 1024
+    with build_opener(NoRedirect()).open(url.geturl(), timeout=40) as response:
+        raw = response.read(limit + 1)
+    if len(raw) > limit:
+        raise SetupError('File exceeds the 32 MiB reading limit.')
+    if suffix == '.pdf':
+        result = subprocess.run(['pdftotext', '-enc', 'UTF-8', '-', '-'], input=raw,
+                                capture_output=True, timeout=40, check=True)
+        text = result.stdout.decode()
+    else:
+        encoding = 'utf-16' if raw.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig'
+        text = raw.decode(encoding)
+    if not text.strip():
+        raise SetupError('No extractable text.')
+    return text
+
+
+def sync_documents(workspace, project, files, token, region):
+    directory = workspace / 'acc-content'
+    if directory.is_symlink():
+        raise SetupError('Refusing linked ACC content directory.')
+    directory.mkdir(mode=0o700, exist_ok=True)
+    retained = set()
+    for file in files:
+        key = hashlib.sha256(json.dumps([project, file['id'], file['version_id'],
+                                         Path(file['name']).suffix.lower()]).encode()).hexdigest()
+        target = directory / (key + '.txt')
+        try:
+            if not target.is_file() or target.is_symlink():
+                text = read_document(project, file, token, region)
+                if text is None:
+                    file['content_status'] = 'unsupported format'
+                    continue
+                write_private(target, text)
+            file['content_path'] = '/workspace/files/acc-content/' + target.name
+            retained.add(target.name)
+        except (SetupError, OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+            file['content_status'] = str(error) if isinstance(error, SetupError) else 'Content unavailable.'
+    return [p for p in directory.iterdir() if re.fullmatch(r'[a-f0-9]{64}\.txt', p.name) and p.name not in retained]
+
+
+def detach_sync():
+    session = os.environ.get('SONNE_ACC_SESSION')
+    if session:
+        subprocess.run(['tmux', '-L', 'sonne-acc', 'detach-client', '-s', session], check=False)
+
+
+def watch_folder(runtime, project, folder, credentials, tokens, processes, region):
     path = runtime / 'workspace/files/acc-folder.json'
     expires = time.monotonic() + int(tokens['expires_in']) - 60
-    print('Keep this terminal open. Sonne refreshes the selected ACC folder every minute.', flush=True)
+    first = True
     while True:
         if any(p.poll() is not None for p in processes.values()):
             raise SetupError('Tunnel or relay stopped. Rerun setup to reconnect.')
-        if time.monotonic() >= expires:
-            renewed, _ = aps_request('/authentication/v2/token', label='ACC folder access renewal',
-                                     credentials=credentials, form={'grant_type': 'refresh_token',
-                                     'refresh_token': tokens['refresh_token'], 'scope': 'data:read'})
-            tokens.update(renewed)
-            expires = time.monotonic() + int(tokens['expires_in']) - 60
-        files = folder_catalog(project, folder, tokens['access_token'])
-        write_json(path, {'project': project, 'folder': folder, 'updated_at': time.time(), 'files': files})
-        print(f'ACC folder synced: {len(files)} files in /workspace/files/acc-folder.json', flush=True)
+        try:
+            if time.monotonic() >= expires:
+                renewed, _ = aps_request('/authentication/v2/token', label='ACC folder access renewal',
+                                         credentials=credentials, form={'grant_type': 'refresh_token',
+                                         'refresh_token': tokens['refresh_token'], 'scope': 'data:read'})
+                tokens.update(renewed)
+                expires = time.monotonic() + int(tokens['expires_in']) - 60
+            files = folder_catalog(project, folder, tokens['access_token'])
+            stale = sync_documents(path.parent, project, files, tokens['access_token'], region)
+            write_json(path, {'project': project, 'folder': folder, 'updated_at': time.time(), 'files': files})
+            print(f'ACC folder synced: {len(files)} files in /workspace/files/acc-folder.json', flush=True)
+            for old in stale:
+                old.unlink(missing_ok=True)
+            if first:
+                detach_sync()
+                first = False
+        except (SetupError, OSError) as error:
+            if first:
+                raise
+            print(f'ACC sync failed; retrying in one minute: {error}', flush=True)
         time.sleep(60)
 
 
@@ -453,7 +545,7 @@ def print_status(status):
 
 
 def watch_publications(runtime, processes):
-    print('Keep this terminal open and publish the change in Revit. Press Ctrl+C to close the relay and tunnel.')
+    detach_sync()
     previous = object()
     while True:
         for label, process in processes.items():
@@ -650,7 +742,7 @@ def configure_acc(runtime, config, callback):
     tokens = authorize(credentials)
     if not LINEAGE.fullmatch(lineage):
         project = 'b.' + PROJECT.fullmatch(project)[1]
-        return lambda processes: watch_folder(runtime, project, folder, credentials, tokens, processes)
+        return lambda processes: watch_folder(runtime, project, folder, credentials, tokens, processes, region)
     model = choose_model(selection, tokens['access_token'])
     print(f'ACC model: {model.name}\nPublished baseline: {model.first_version}\nFolder: {model.folder}')
     print(f"Approved Revit schedule UniqueId: {config['schedule_id']}")
@@ -703,7 +795,7 @@ def configure_acc(runtime, config, callback):
                 print(f'Remove the previous webhook {hook} in APS (HTTP {error.code}).')
         except (URLError, TimeoutError):
             print(f'Remove the previous webhook {hook} in APS if it is still active.')
-    print('ACC mode is running. Keep the tunnel open.')
+    print('ACC publication monitoring is ready.')
     print(f"Version {config['aps']['first_version']} is the baseline. The next Publish Latest triggers the comparison.")
 
 
@@ -720,7 +812,17 @@ def main():
     os.umask(0o077)
     warnings.filterwarnings('error', category=GetPassWarning)
     try:
-        setup(parser.parse_args())
+        args = parser.parse_args()
+        if (args.install or args.auto or args.callback) and not os.environ.get('SONNE_ACC_SESSION'):
+            if not shutil.which('tmux') or not shutil.which('pdftotext'):
+                subprocess.run(['sudo', 'apt-get', 'install', '-y', 'tmux', 'poppler-utils'], check=True)
+            session = 'sonne-' + hashlib.sha256(os.fsencode(args.runtime.resolve())).hexdigest()[:16]
+            command = shlex.join(['env', 'SONNE_ACC_SESSION=' + session, sys.executable,
+                                  str(Path(__file__).resolve()), *sys.argv[1:]])
+            print(f'After setup you can close the terminal. Status: tmux -L sonne-acc attach -t {session}', flush=True)
+            return subprocess.call(['tmux', '-L', 'sonne-acc', 'new-session', '-A', '-s', session, command],
+                                   env={k: v for k, v in os.environ.items() if k != 'TMUX'})
+        setup(args)
     except OSError as error:
         if error.errno == EADDRINUSE:
             print('Port 8765 is already in use. Close the other APS setup terminal and retry.', file=sys.stderr)

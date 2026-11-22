@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 
 PROJECT = 'sonne'
@@ -250,6 +251,19 @@ def run(args):
             mount = Path(re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), line.split()[4]))
             if mount.is_relative_to(runtime):
                 raise ValueError(f'Unmount {mount} before purging.')
+    if shutil.which('tmux'):
+        session = 'sonne-' + hashlib.sha256(os.fsencode(runtime)).hexdigest()[:16]
+        tmux = ['tmux', '-L', 'sonne-acc']
+        def active():
+            return subprocess.run([*tmux, 'has-session', '-t', session], capture_output=True).returncode == 0
+        if active():
+            subprocess.run([*tmux, 'send-keys', '-t', session, 'C-c'], check=True)
+            for _ in range(50):
+                if not active():
+                    break
+                time.sleep(0.2)
+            else:
+                raise ValueError('Stop the ACC background session before uninstalling.')
     check_acc_terminal(runtime)
     docker, resources = docker_inventory(runtime, args.purge)
     receipt = runtime / '.sonne-uninstall-started'

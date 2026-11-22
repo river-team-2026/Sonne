@@ -23,6 +23,29 @@ spec.loader.exec_module(acc)
 
 
 class AutomaticAccTests(unittest.TestCase):
+    def test_folder_content_download_cache_and_deletion(self):
+        item = {'name': 'Brief.md', 'id': 'lineage', 'version_id': 'version'}
+        version = {'data': {'id': 'version', 'relationships': {'item': {'data': {'id': 'lineage'}},
+                   'storage': {'data': {'id': 'urn:adsk.objects:os.object:bucket/brief'}}}}}
+        responses = [(version, {}), ({'url': 'https://bucket.s3.amazonaws.com/file'}, {})]
+        with TemporaryDirectory() as tmp, patch.object(acc, 'aps_request', side_effect=responses) as api, patch.object(acc, 'build_opener') as opener:
+            opener.return_value.open.return_value = BytesIO(b'Room target: 60 m2')
+            root = Path(tmp)
+            for _ in range(2):
+                self.assertEqual(acc.sync_documents(root, 'project', [item], 'token', 'EMEA'), [])
+            cached = root / 'acc-content' / Path(item['content_path']).name
+            self.assertEqual(cached.read_text(), 'Room target: 60 m2')
+            self.assertEqual(api.call_count, 2)
+            self.assertEqual(acc.sync_documents(root, 'project', [], 'token', 'EMEA'), [cached])
+
+    def test_reads_european_revit_object_tree(self):
+        responses = [({'data': {'metadata': [{'guid': 'view', 'role': '3d'}]}}, {}),
+                     ({'data': {'objects': [{'name': 'Room 101'}]}}, {})]
+        with patch.object(acc, 'aps_request', side_effect=responses) as api:
+            text = acc.read_document('project', {'name': 'Hospital.rvt', 'version_id': 'v2'}, 'token', 'EMEA')
+        self.assertIn('Room 101', text)
+        self.assertEqual(api.call_args.kwargs['region'], 'EMEA')
+
     def test_folder_catalog_lists_all_file_types_across_pages(self):
         project, folder = 'b.project', 'urn:adsk.wipemea:fs.folder:co.Pilot'
         next_url = acc.APS + '/data/v1/projects/b.project/folders/' + acc.quote(folder, safe='') + '/contents?page=2'
