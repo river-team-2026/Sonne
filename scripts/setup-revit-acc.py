@@ -511,11 +511,14 @@ def quick_tunnel(runtime, revit=False):
         tunnel_config = Path(temp) / 'cloudflared.yml'
         tunnel_config.write_text('{}\n', encoding='utf-8')
         print('Starting the local relay and Cloudflare Quick Tunnel.', flush=True)
-        with running_process([sys.executable, str(relay_script), '--port', '0', *(['--revit'] if revit else [])], relay_log) as relay:
+        endpoint_file = Path(temp) / 'router-url'
+        relay_args = ['--revit', '--runtime', str(runtime), '--endpoint-file', str(endpoint_file)] if revit else []
+        with running_process([sys.executable, str(relay_script), '--port', '0', *relay_args], relay_log) as relay:
             local = wait_for_address('Webhook relay', relay, relay_log, RELAY_ORIGIN, 10)
             command = [cloudflared, 'tunnel', '--config', str(tunnel_config), '--no-autoupdate', '--url', local]
             with running_process(command, tunnel_log) as tunnel:
                 public = wait_for_address('Cloudflare Quick Tunnel', tunnel, tunnel_log, TUNNEL_ORIGIN, 45)
+                write_private(endpoint_file, public + '/revit/')
                 print(f'Webhook endpoint: {public}/aps/publish', flush=True)
                 yield public + '/aps/publish', {'Webhook relay': relay, 'Cloudflare Quick Tunnel': tunnel}
 
@@ -780,6 +783,11 @@ def resume_folder(runtime):
 
 def setup(args):
     runtime = args.runtime.expanduser().resolve(strict=True)
+    if getattr(args, 'discovery_dir', None):
+        directory = args.discovery_dir.expanduser().resolve(strict=True)
+        if not directory.is_dir() or not os.access(directory, os.W_OK):
+            raise SetupError('Select a writable shared folder accessible to the Revit workstations.')
+        write_json(runtime / '.state/revit-discovery.json', {'directory': str(directory)})
     if getattr(args, 'resume_folder', False):
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
         resume_folder(runtime)
@@ -917,6 +925,7 @@ def configure_acc(runtime, config, callback):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
+    parser.add_argument('--discovery-dir', type=Path, help='Shared directory for signed Revit tunnel addresses.')
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--resume-folder', action='store_true', help='Resume the saved folder sync and Revit tunnel.')
     mode.add_argument('--disable-startup', action='store_true', help='Remove the managed startup registration.')

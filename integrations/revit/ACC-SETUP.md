@@ -104,7 +104,18 @@ Linux the user systemd service starts at boot. On Windows a per-user scheduled
 task starts WSL at sign-in. Both renew the APS access token, create a fresh
 Revit tunnel and write its URL into managed enrollments. The current Windows
 client rereads its local enrollment when reconnecting. For a workstation on
-another computer, deliver the new URL separately or use a permanent router.
+another computer, configure tunnel discovery once using a shared directory
+that the server can write and the enrolled workstations can read (for example,
+an SMB share mounted on Linux). Run folder setup with
+`--discovery-dir /path/to/share` alongside `--install`. On each remote
+Windows workstation, set the user environment variable
+`SONNE_REVIT_DISCOVERY_DIR` to that same directory's Windows path and
+start the updated client in a new terminal. Alternatively set
+`discoveryDirectory` in the private client config. Each workstation still
+needs its own enrollment. Keep the share mounted after server reboot and the
+machines' clocks synchronized. The running client rediscovers the endpoint
+after a disconnect. Signed announcements expire after three minutes, and
+the credential used over the tunnel is specific to its hostname.
 Revoked or expired Autodesk authorization requires a new interactive sign-in.
 
 On WSL the installer copies the enrollment into the Windows checkout at

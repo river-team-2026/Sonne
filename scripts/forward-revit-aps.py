@@ -2,8 +2,16 @@
 """Forward the single APS publish endpoint to the local Sonne service."""
 
 import argparse
+import hashlib
+import hmac
+import json
+import os
 import re
 import shutil
+import threading
+import time
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
@@ -13,6 +21,53 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+def mac(token, message):
+    return hmac.new(token.encode(), message.encode(), hashlib.sha256).hexdigest()
+
+
+def publish_routes(runtime, endpoint, shared):
+    registry = json.loads((runtime / '.state/revit-hub/registry.json').read_text())
+    expires = int(time.time()) + 180
+    routes = {}
+    for client in registry['clients']:
+        token = client['token']
+        if not isinstance(token, str) or len(token) < 32:
+            continue
+        name = mac(token, 'sonne-discovery-v1') + '.json'
+        signature = mac(token, f'sonne-route-v1\n{endpoint}\n{expires}')
+        routes['sr1-' + mac(token, 'sonne-access-v1\n' + endpoint)] = token
+        temporary = None
+        try:
+            with NamedTemporaryFile(mode='w', dir=shared, delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump(dict(url=endpoint, expires=expires, signature=signature), stream)
+            os.chmod(temporary, 0o644)
+            os.replace(temporary, shared / name)
+        finally:
+            if temporary:
+                temporary.unlink(missing_ok=True)
+    return routes
+
+
+def advertise(server, runtime, endpoint_file):
+    settings = runtime / '.state/revit-discovery.json'
+    last_error = None
+    while True:
+        try:
+            if settings.exists() and endpoint_file.exists():
+                endpoint = endpoint_file.read_text().strip()
+                if not re.fullmatch(r'https://[a-z0-9-]+\.trycloudflare\.com/revit/', endpoint):
+                    raise ValueError('Invalid managed tunnel address.')
+                shared = Path(json.loads(settings.read_text())['directory'])
+                server.route_tokens = publish_routes(runtime, endpoint, shared)
+                last_error = None
+        except (OSError, KeyError, ValueError) as error:
+            if str(error) != last_error:
+                print(f'Revit discovery unavailable: {error}', flush=True)
+                last_error = str(error)
+        time.sleep(10)
 
 
 class ForwardPublish(BaseHTTPRequestHandler):
@@ -31,6 +86,11 @@ class ForwardPublish(BaseHTTPRequestHandler):
         if not auth.startswith('Bearer '):
             self.send_error(401)
             return
+        if auth.startswith('Bearer sr1-'):
+            token = self.server.route_tokens.get(auth[7:])
+            if not token:
+                return self.send_error(401)
+            auth = 'Bearer ' + token
         request = Request('http://127.0.0.1:9081' + self.path[len('/revit'):], data=body,
                           headers={'Authorization': auth, 'Content-Type': 'application/json'})
         try:
@@ -100,9 +160,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=9083, help='Local port, or 0 to choose a free port.')
     parser.add_argument('--revit', action='store_true')
+    parser.add_argument('--runtime', type=Path)
+    parser.add_argument('--endpoint-file', type=Path)
     args = parser.parse_args()
     with ThreadingHTTPServer(('127.0.0.1', args.port), ForwardPublish) as server:
         server.revit = args.revit
+        server.route_tokens = {}
+        if args.revit and args.runtime and args.endpoint_file:
+            threading.Thread(target=advertise, args=(server, args.runtime, args.endpoint_file), daemon=True).start()
         print(f'APS webhook relay listening on http://127.0.0.1:{server.server_port}/aps/publish', flush=True)
         try:
             server.serve_forever()

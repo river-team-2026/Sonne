@@ -8,8 +8,10 @@ import {createHash, randomUUID} from 'node:crypto';
 import {Transform, Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {api, readConfig, READ_TOOLS, WRITE_TOOLS, enabledTools, ROOM_PUBLICATION_TOOL} from './common.mjs';
+import {discoverRouter} from './discovery.mjs';
 
 const config = await readConfig(process.argv[2]);
+const enrollmentToken = config.token;
 if (new URL(config.url).protocol !== 'https:') throw new Error('The Windows client requires an HTTPS server URL.');
 async function stagePublication(digest, deadline) {
   if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('Invalid publication digest.');
@@ -51,8 +53,13 @@ for (;;) {
     const current = await model();
     if (!sessionId) {
       const enrollment = await readConfig(process.argv[2]);
-      if (enrollment.token === config.token && new URL(enrollment.url).protocol === 'https:') {
+      if (enrollment.token !== enrollmentToken) throw new Error('Enrollment changed. Restart the Revit client.');
+      const directory = enrollment.discoveryDirectory || process.env.SONNE_REVIT_DISCOVERY_DIR;
+      if (directory) {
+        Object.assign(config, await discoverRouter(directory, enrollmentToken));
+      } else if (new URL(enrollment.url).protocol === 'https:') {
         config.url = enrollment.url;
+        config.token = enrollmentToken;
       }
       ({sessionId} = await api(config, 'register', {tools: tools.filter(tool => enabledTools(config.enableWrites === true).includes(tool.name) || (config.enablePublications === true && tool.name === ROOM_PUBLICATION_TOOL)), writeEnabled: config.enableWrites === true, model: current}));
       console.log('Registered Windows session:', sessionId);
