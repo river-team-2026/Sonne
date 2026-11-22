@@ -2,6 +2,7 @@
 """Forward the single APS publish endpoint to the local Sonne service."""
 
 import argparse
+import base64
 import hashlib
 import hmac
 import json
@@ -27,7 +28,7 @@ def mac(token, message):
     return hmac.new(token.encode(), message.encode(), hashlib.sha256).hexdigest()
 
 
-def publish_routes(runtime, endpoint, shared):
+def publish_routes(runtime, endpoint, shared=None):
     registry = json.loads((runtime / '.state/revit-hub/registry.json').read_text())
     expires = int(time.time()) + 180
     routes = {}
@@ -38,6 +39,8 @@ def publish_routes(runtime, endpoint, shared):
         name = mac(token, 'sonne-discovery-v1') + '.json'
         signature = mac(token, f'sonne-route-v1\n{endpoint}\n{expires}')
         routes['sr1-' + mac(token, 'sonne-access-v1\n' + endpoint)] = token
+        if shared is None:
+            continue
         temporary = None
         try:
             with NamedTemporaryFile(mode='w', dir=shared, delete=False) as stream:
@@ -51,17 +54,44 @@ def publish_routes(runtime, endpoint, shared):
     return routes
 
 
+def internet_announcement(token, endpoint):
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    topic = 'sonne-' + mac(token, 'sonne-topic-v1')
+    key = bytes.fromhex(mac(token, 'sonne-discovery-key-v1'))
+    nonce = os.urandom(12)
+    payload = json.dumps({'url': endpoint, 'expires': int(time.time()) + 6 * 3600}).encode()
+    ciphertext = AESGCM(key).encrypt(nonce, payload, topic.encode())
+    return Request('https://ntfy.sh/' + topic, data=base64.b64encode(nonce + ciphertext),
+                   headers={'Content-Type': 'text/plain', 'X-Firebase': 'no'})
+
+
 def advertise(server, runtime, endpoint_file):
     settings = runtime / '.state/revit-discovery.json'
     last_error = None
+    next_publish = {}
     while True:
         try:
-            if settings.exists() and endpoint_file.exists():
+            if endpoint_file.exists():
                 endpoint = endpoint_file.read_text().strip()
                 if not re.fullmatch(r'https://[a-z0-9-]+\.trycloudflare\.com/revit/', endpoint):
                     raise ValueError('Invalid managed tunnel address.')
-                shared = Path(json.loads(settings.read_text())['directory'])
-                server.route_tokens = publish_routes(runtime, endpoint, shared)
+                server.route_tokens = publish_routes(runtime, endpoint)
+                if settings.exists():
+                    try:
+                        publish_routes(runtime, endpoint, Path(json.loads(settings.read_text())['directory']))
+                    except OSError:
+                        print('Shared discovery directory unavailable.', flush=True)
+                next_publish = {key: value for key, value in next_publish.items() if key in server.route_tokens}
+                for key, token in server.route_tokens.items():
+                    if time.monotonic() < next_publish.get(key, 0):
+                        continue
+                    try:
+                        with build_opener(NoRedirect()).open(internet_announcement(token, endpoint), timeout=8):
+                            pass
+                        next_publish[key] = time.monotonic() + 4 * 3600
+                    except (OSError, HTTPException):
+                        next_publish[key] = time.monotonic() + 60
+                        print('Internet discovery unavailable; will retry.', flush=True)
                 last_error = None
         except (OSError, KeyError, ValueError) as error:
             if str(error) != last_error:

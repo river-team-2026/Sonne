@@ -8,7 +8,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {Transform, Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {api, readConfig, READ_TOOLS, WRITE_TOOLS, enabledTools, ROOM_PUBLICATION_TOOL} from './common.mjs';
-import {discoverRouter} from './discovery.mjs';
+import {discoverOnline, discoverRouter} from './discovery.mjs';
 
 const config = await readConfig(process.argv[2]);
 const enrollmentToken = config.token;
@@ -55,7 +55,17 @@ for (;;) {
       const enrollment = await readConfig(process.argv[2]);
       if (enrollment.token !== enrollmentToken) throw new Error('Enrollment changed. Restart the Revit client.');
       const directory = enrollment.discoveryDirectory || process.env.SONNE_REVIT_DISCOVERY_DIR;
-      if (directory) {
+      if (/^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/revit\/$/.test(enrollment.url)) {
+        try {
+          Object.assign(config, await discoverOnline(enrollmentToken));
+        } catch (error) {
+          if (!directory) {
+            await pause(12000);
+            throw error;
+          }
+          Object.assign(config, await discoverRouter(directory, enrollmentToken));
+        }
+      } else if (directory) {
         Object.assign(config, await discoverRouter(directory, enrollmentToken));
       } else if (new URL(enrollment.url).protocol === 'https:') {
         config.url = enrollment.url;

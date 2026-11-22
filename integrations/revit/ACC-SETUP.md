@@ -103,19 +103,22 @@ into a tmux session. Folder mode also registers automatic recovery. On native
 Linux the user systemd service starts at boot. On Windows a per-user scheduled
 task starts WSL at sign-in. Both renew the APS access token, create a fresh
 Revit tunnel and write its URL into managed enrollments. The current Windows
-client rereads its local enrollment when reconnecting. For a workstation on
-another computer, configure tunnel discovery once using a shared directory
-that the server can write and the enrolled workstations can read (for example,
-an SMB share mounted on Linux). Run folder setup with
-`--discovery-dir /path/to/share` alongside `--install`. On each remote
-Windows workstation, set the user environment variable
-`SONNE_REVIT_DISCOVERY_DIR` to that same directory's Windows path and
-start the updated client in a new terminal. Alternatively set
-`discoveryDirectory` in the private client config. Each workstation still
-needs its own enrollment. Keep the share mounted after server reboot and the
-machines' clocks synchronized. The running client rediscovers the endpoint
-after a disconnect. Signed announcements expire after three minutes, and
-the credential used over the tunnel is specific to its hostname.
+client rereads its local enrollment when reconnecting. After one-time enrollment, remote workstations on other networks discover
+the current Quick Tunnel over outbound HTTPS. The server posts an encrypted
+announcement to a separate ntfy.sh topic derived from each enrollment. An
+updated client uses its existing enrollment to decrypt and verify the address
+whenever it reconnects. The relay accepts a hostname-specific credential.
+The ntfy service sees opaque topic identifiers, ciphertext, timing and IP
+addresses. It receives no enrollment tokens, plaintext tunnel URLs or model data.
+Both ends need access to ntfy.sh and the Cloudflare tunnel, and synchronized
+clocks. If the discovery service is unavailable, the client retries. An
+existing shared discovery directory remains available as a fallback.
+
+For an existing startup installation, update the server checkout and run
+`python3 scripts/setup-revit-acc.py --runtime ~/agents/sonne --upgrade-discovery`.
+The update takes effect at the next server startup. Update the checkout on each
+client and restart its client launcher once. New installations enable internet
+discovery with the normal ACC setup.
 Revoked or expired Autodesk authorization requires a new interactive sign-in.
 
 On WSL the installer copies the enrollment into the Windows checkout at

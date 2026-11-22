@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from errno import EADDRINUSE
 from getpass import GetPassWarning, getpass
 import hashlib
+import importlib.util
 import hmac
 import json
 import os
@@ -927,6 +928,7 @@ def main():
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--discovery-dir', type=Path, help='Shared directory for signed Revit tunnel addresses.')
     mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--upgrade-discovery', action='store_true', help='Update a configured startup worker for internet discovery on its next launch.')
     mode.add_argument('--resume-folder', action='store_true', help='Resume the saved folder sync and Revit tunnel.')
     mode.add_argument('--disable-startup', action='store_true', help='Remove the managed startup registration.')
     mode.add_argument('--remove-hook', action='store_true', help='Unregister the saved Sonne publication webhook.')
@@ -939,6 +941,19 @@ def main():
     warnings.filterwarnings('error', category=GetPassWarning)
     try:
         args = parser.parse_args()
+        if args.install or args.upgrade_discovery:
+            if importlib.util.find_spec('cryptography') is None:
+                subprocess.run(['sudo', 'apt-get', 'install', '-y', 'python3-cryptography'], check=True)
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        if args.upgrade_discovery:
+            directory = args.runtime.expanduser().resolve() / '.state/acc-startup'
+            if not (directory / 'folder.json').is_file():
+                raise SetupError('Configure folder startup with --install first.')
+            for name in ('forward-revit-aps.py', 'setup-revit-acc.py'):
+                source = Path(__file__).with_name(name)
+                write_private(directory / name, source.read_text(encoding='utf-8'))
+            print('Internet discovery installed for the next server startup. Existing enrollments are ready.')
+            return 0
         if (args.install or args.auto or args.callback) and not os.environ.get('SONNE_ACC_SESSION'):
             if not shutil.which('tmux') or not shutil.which('pdftotext'):
                 subprocess.run(['sudo', 'apt-get', 'install', '-y', 'tmux', 'poppler-utils'], check=True)

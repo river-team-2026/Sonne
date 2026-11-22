@@ -17,6 +17,34 @@ relay = runpy.run_path(str(ROOT / 'scripts/forward-revit-aps.py'))
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_internet_pairing_survives_restart_without_a_share(self):
+        token = 'fixture-remote-enrollment-' * 2
+        reader = """import {discoverOnline} from './integrations/revit/discovery.mjs';
+                    const [event, token] = process.argv.slice(1);
+                    const fetcher = async (url, options) => {
+                      if (url !== 'https://ntfy.sh/' + JSON.parse(event).topic + '/json?poll=1&since=latest' ||
+                          options.headers || options.redirect !== 'error') throw Error('Unexpected lookup');
+                      return new Response(event);
+                    };
+                    console.log(JSON.stringify(await discoverOnline(token, fetcher)));"""
+        def resolve(event, key=token):
+            return subprocess.run(['node', '--input-type=module', '-e', reader, json.dumps(event), key],
+                                  cwd=ROOT, capture_output=True, text=True)
+        for host in ['first', 'after-restart']:
+            url = f'https://{host}.trycloudflare.com/revit/'
+            request = relay['internet_announcement'](token, url)
+            event = dict(topic=request.full_url.split('/')[-1], event='message', message=request.data.decode())
+            result = resolve(event)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {
+                'url': url, 'token': 'sr1-' + relay['mac'](token, 'sonne-access-v1\n' + url)})
+        self.assertNotEqual(resolve(event, 'different-token').returncode, 0)
+        event['message'] = ('A' if event['message'][0] != 'A' else 'B') + event['message'][1:]
+        self.assertNotEqual(resolve(event).returncode, 0)
+        with patch('time.time', return_value=1):
+            event['message'] = relay['internet_announcement'](token, url).data.decode()
+        self.assertNotEqual(resolve(event).returncode, 0)
+
     def test_relay_forwards_scoped_credential_only_to_the_local_hub(self):
         handler = relay['ForwardPublish']
         with ThreadingHTTPServer(('127.0.0.1', 0), handler) as server:

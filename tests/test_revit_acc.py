@@ -113,7 +113,7 @@ class AutomaticAccTests(unittest.TestCase):
     def test_tunnel_uses_the_running_relay_and_cleans_up_both_processes(self):
         announce = "print('https://test-snowdon.trycloudflare.com', flush=True)"
         with self.fake_quick_tunnel(announce + "\nimport time\ntime.sleep(30)") as (children, origins):
-            with acc.quick_tunnel(ROOT, revit=True) as (url, _):
+            with TemporaryDirectory() as tmp, acc.quick_tunnel(Path(tmp), revit=True) as (url, _):
                 self.assertEqual(url, "https://test-snowdon.trycloudflare.com/aps/publish")
                 self.assertEqual(len(origins), 1)
                 opener = build_opener(ProxyHandler({}))
