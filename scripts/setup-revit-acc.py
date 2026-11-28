@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Set up a folder-scoped APS publish hook for the existing room schedule check."""
+"""Configure local Revit MCP access or the Autodesk publication integration."""
 
 import argparse
 import base64
@@ -21,6 +21,7 @@ import shlex
 import secrets
 import signal
 import shutil
+import ssl
 import subprocess
 import sys
 from tempfile import NamedTemporaryFile, TemporaryDirectory
@@ -29,7 +30,7 @@ import warnings
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlsplit
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener, urlopen
 
 
 APS = 'https://developer.api.autodesk.com'
@@ -574,7 +575,7 @@ def watch_publications(runtime, processes):
         time.sleep(3)
 
 
-def deliver_enrollment(enrollment, checkout):
+def deliver_enrollment(enrollment, checkout, config_name='config.json'):
     if 'microsoft' not in platform.release().lower() and not os.environ.get('WSL_DISTRO_NAME'):
         print(f'Transfer {enrollment} privately to the Revit workstation.', flush=True)
         return
@@ -595,8 +596,8 @@ def deliver_enrollment(enrollment, checkout):
 
     directory = checkout / '.state/revit-client'
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / 'config.json'
-    display = windows_path(directory) + '\\config.json'
+    target = directory / config_name
+    display = windows_path(target)
     location = enrollment.with_suffix('.windows-path')
     updated = None
     if target.exists():
@@ -606,7 +607,7 @@ def deliver_enrollment(enrollment, checkout):
             raise SetupError('The Windows client is enrolled with another token. Select its matching checkout.')
         if existing.get('url') == incoming['url']:
             write_private(location, windows_path(checkout) + '\n')
-            return
+            return target
         updated = {**existing, 'url': incoming['url']}
 
     # Windows permissions on a mounted drive are controlled by NTFS.
@@ -626,17 +627,59 @@ def deliver_enrollment(enrollment, checkout):
             os.replace(temp, target)
             write_private(location, windows_path(checkout) + '\n')
             print('Revit tunnel URL updated. Restart the Windows client to reconnect.', flush=True)
-            return
+            return target
         shutil.copyfile(enrollment, temp)
         try:
             os.link(temp, target)
         except FileExistsError:
-            print(f'Using existing Windows client configuration: {display}', flush=True)
-            return
+            raise SetupError('The Windows enrollment changed during setup. Rerun setup to verify it.') from None
     finally:
         temp.unlink(missing_ok=True)
     write_private(location, windows_path(checkout) + '\n')
     print(f'Installed Windows client configuration: {display}', flush=True)
+    return target
+
+
+def setup_local_revit(runtime):
+    if 'microsoft' not in platform.release().lower() and not os.environ.get('WSL_DISTRO_NAME'):
+        raise SetupError('Run local Revit setup in WSL on the Windows Revit workstation.')
+    source = Path(__file__).resolve().parents[1]
+    url = 'https://127.0.0.1:9443/revit/'
+    client_id = 'windows-local'
+    subprocess.run(['bash', str(source / 'scripts/setup-revit-server.sh'), str(runtime),
+                    url, client_id, 'Local Revit workstation'], check=True)
+    caddyfile = Path('integrations/revit/Caddyfile.local')
+    if (source / caddyfile).resolve() != (runtime / caddyfile).resolve():
+        shutil.copyfile(source / caddyfile, runtime / caddyfile)
+    compose = compose_command(runtime)
+    if os.environ.get('SONNE_DOCKER_USE_SUDO') == '1':
+        compose = ['sudo', *compose]
+    subprocess.run([*compose, 'up', '-d', '--no-deps', 'revit-local-https'], cwd=runtime, check=True)
+    with TemporaryDirectory(prefix='sonne-local-tls-') as directory:
+        cert = Path(directory) / 'local-ca.crt'
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            result = subprocess.run([*compose, 'exec', '-T', 'revit-local-https', 'cat',
+                                     '/data/caddy/pki/authorities/local/root.crt'],
+                                    cwd=runtime, capture_output=True, timeout=5)
+            if result.returncode == 0:
+                cert.write_bytes(result.stdout)
+                try:
+                    context = ssl.create_default_context(cafile=str(cert))
+                    with build_opener(ProxyHandler({}), HTTPSHandler(context=context)).open(url + 'health', timeout=3) as response:
+                        if json.load(response).get('ok') is True:
+                            break
+                except (OSError, ValueError):
+                    pass
+            time.sleep(1)
+        else:
+            raise SetupError('Local HTTPS did not pass its health check. Check the revit-local-https container and port 9443.')
+        enrollment = runtime / '.state/revit-hub' / f'enroll-{client_id}.json'
+        installed = deliver_enrollment(enrollment, source, config_name='config-local.json')
+        if installed is None:
+            raise SetupError('Choose the Windows checkout on this computer to complete local enrollment.')
+        write_private(installed.with_name('local-ca.crt'), cert.read_text(encoding='ascii'))
+    print('Local Revit HTTPS is ready at ' + url, flush=True)
 
 
 def prepare_revit(runtime, local, url):
@@ -784,6 +827,9 @@ def resume_folder(runtime):
 
 def setup(args):
     runtime = args.runtime.expanduser().resolve(strict=True)
+    if getattr(args, 'local_revit', False):
+        setup_local_revit(runtime)
+        return
     if getattr(args, 'discovery_dir', None):
         directory = args.discovery_dir.expanduser().resolve(strict=True)
         if not directory.is_dir() or not os.access(directory, os.W_OK):
@@ -928,6 +974,7 @@ def main():
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--discovery-dir', type=Path, help='Shared directory for signed Revit tunnel addresses.')
     mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--local-revit', action='store_true', help='Set up Revit MCP on the same Windows/WSL PC using local HTTPS.')
     mode.add_argument('--upgrade-discovery', action='store_true', help='Update a configured startup worker for internet discovery on its next launch.')
     mode.add_argument('--resume-folder', action='store_true', help='Resume the saved folder sync and Revit tunnel.')
     mode.add_argument('--disable-startup', action='store_true', help='Remove the managed startup registration.')

@@ -89,4 +89,4 @@ if 'CurveIntersectResultOption.Detailed' not in source:
         raise SystemExit('Unexpected upstream geometry code; review the pinned version.')
     source = source.replace(old, new, 1)
 path.write_text(source, encoding='utf-8', newline='\n')
-print('Prepared Revit 2027 targets, loopback-only socket and document session metadata.')
+print('Prepared the Revit build targets, loopback-only socket and document session metadata.')

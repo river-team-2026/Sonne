@@ -1,0 +1,13 @@
+{
+	admin off
+	auto_https disable_redirects
+	skip_install_trust
+	default_sni 127.0.0.1
+}
+
+https://127.0.0.1:9443 {
+	tls internal
+	handle_path /revit/* {
+		reverse_proxy revit-hub:9091
+	}
+}

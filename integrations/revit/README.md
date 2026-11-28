@@ -129,6 +129,30 @@ user's ACL. Never put tokens in chat or Git. Repeat setup with a different
 client ID for the next workstation. Setup recreates the router to load its
 registry; connected clients then register fresh sessions automatically.
 
+## Revit and Sonne on the same Windows PC
+
+When Sonne runs in WSL on the Revit workstation, run the following from the source checkout in Ubuntu. The local endpoint is bound to Windows/WSL loopback and uses HTTPS with its own CA. The setup confirms that HTTPS reaches the Revit hub before copying enrollment and the public CA certificate to Windows.
+
+```bash
+python3 scripts/setup-revit-acc.py --runtime "$HOME/agents/sonne" --local-revit
+```
+
+For a fresh Sonne installation, use `bash scripts/install-sonne.sh --local-revit`. If you cloned the source inside Linux, supply the full Windows checkout path when prompted.
+
+Close Revit and run the following in Windows PowerShell from the Windows checkout. For Revit 2026, install the .NET 8 SDK, Git, Python 3 and Node.js 22 or 24.
+
+```powershell
+.\scripts\install-revit-client.cmd -RevitVersion 2026 -ConfigPath .state\revit-client\config-local.json
+```
+
+Open a model in Revit, enable **Revit MCP Switch** and run:
+
+```powershell
+.\scripts\start-revit-client.cmd -ConfigPath .state\revit-client\config-local.json -CertificatePath .state\revit-client\local-ca.crt
+```
+
+Keep the Ubuntu session open while testing so WSL stays running. Wait for `Registered Windows session` and ask Sonne for the exact name and type of the active view. The Revit 2026 installer supports live model reads. The full editing and publication extensions require the Revit 2027 client. Set up a public HTTPS endpoint separately for ACC publication webhooks.
+
 ## Windows workstation
 
 Requirements: Revit 2027, .NET 10 SDK, Python 3, Git, Node.js 22 or 24, and

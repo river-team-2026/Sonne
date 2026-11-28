@@ -21,6 +21,19 @@ services:
     logging:
       driver: json-file
       options: {max-size: 5m, max-file: "2"}
+  revit-local-https:
+    profiles: [revit-local]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - revit-hub
+    ports:
+      - "127.0.0.1:9443:9443"
+    volumes:
+      - ./integrations/revit/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - revit-local-tls:/data
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
   revit-publications:
     profiles: [revit-publications]
     build: ./integrations/revit
@@ -45,6 +58,9 @@ services:
     mem_limit: 160m
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9092/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+
+volumes:
+  revit-local-tls:
     logging:
       driver: json-file
       options: {max-size: 5m, max-file: "2"}

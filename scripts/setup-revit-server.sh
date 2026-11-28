@@ -30,7 +30,7 @@ provision=(python3 "$source_root/scripts/provision-revit.py" "$PWD" "$url" --cli
 "${provision[@]}" "${flags[@]}"
 compose=(docker compose --env-file .env -f compose.yaml -f compose.override.yaml -f compose.prompt-studio.yaml -f compose.revit.yaml)
 if [[ ${SONNE_DOCKER_USE_SUDO:-} == 1 ]]; then compose=(sudo "${compose[@]}"); fi
-"${compose[@]}" up -d --wait --wait-timeout 90 ollama
+"${compose[@]}" up -d --wait --wait-timeout 90 ollama openclaw
 "${compose[@]}" exec -T openclaw npm ci --omit=dev --ignore-scripts --prefix /home/node/.openclaw/integrations/revit
 "${compose[@]}" up -d --build --force-recreate --wait --wait-timeout 30 revit-hub
 "${compose[@]}" exec -T openclaw node dist/index.js config set --batch-file /home/node/.openclaw/revit-mcp-config.json

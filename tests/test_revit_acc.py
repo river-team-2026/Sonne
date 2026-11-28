@@ -270,6 +270,17 @@ class IntegratedAccTests(unittest.TestCase):
             self.assertEqual(json.loads(target.read_text())['command'], 'node')
             self.assertEqual(json.loads(target.read_text())['url'], 'https://new.example/revit/')
             self.assertEqual(list(target.parent.iterdir()), [target])
+            local = acc.deliver_enrollment(enrollment, checkout, config_name='config-local.json')
+            self.assertEqual(local.name, 'config-local.json')
+            self.assertEqual(local.read_bytes(), enrollment.read_bytes())
+            self.assertEqual(json.loads(target.read_text())['command'], 'node')
+
+    def test_local_mode_dispatches_without_starting_a_quick_tunnel(self):
+        args = acc.argparse.Namespace(runtime=self.runtime, local_revit=True)
+        with patch.object(acc, 'setup_local_revit') as local, patch.object(acc, 'quick_tunnel') as quick:
+            acc.setup(args)
+        local.assert_called_once_with(self.runtime.resolve())
+        quick.assert_not_called()
 
     def test_deploy_keeps_the_selected_archive_directory_when_docker_needs_sudo(self):
         directory = self.runtime / '.state/revit-publications-acc'
