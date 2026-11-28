@@ -188,6 +188,14 @@ needs access. Closing it disconnects the workstation. The add-in's **Revit MCP
 Switch** button can stop the local listener. If no document is open, or Revit is
 waiting in a modal dialog, a model read cannot complete.
 
+The client terminal reports connection status, model readiness and every tool
+request received from Sonne. A completed request includes its tool name and
+duration after the result is accepted by the router. Connection retries only
+repeat the message when the cause changes. Logs are also written as JSON lines
+to `%LOCALAPPDATA%\Sonne\RevitClient\client.log`, with two rotated backups.
+The log records request IDs and outcomes. Credentials, model names, arguments
+and results are excluded from the client log.
+
 ## Enable editing for a workstation
 
 The initial setup is read-only. To enable edits for an enrolled client on the
