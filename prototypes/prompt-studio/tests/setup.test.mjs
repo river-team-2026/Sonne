@@ -56,3 +56,50 @@ test('automatic setup creates private profiles, preserves OAuth configuration on
   await writeFile(path.join(root, '.env'), loginEnv.replace('http://localhost:9080', 'http://public.example') + 'DISCORD_USER_IDS=111111111111111111\n');
   await assert.rejects(run('bash', command), error => error.stderr.includes('HTTPS origin'));
 });
+
+test('adding Discord users updates Studio and the configured bot allowlists idempotently', {skip: process.getuid?.() === 0}, async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'studio-users-'));
+  t.after(() => rm(root, {recursive: true}));
+  const state = path.join(root, '.state/openclaw');
+  const studio = path.join(root, '.state/prompt-studio');
+  const configPath = path.join(state, 'openclaw.json');
+  const env = path.join(root, '.env');
+  const original = '111111111111111111', added = '222222222222222222', extra = '333333333333333333';
+  const guildId = '444444444444444444', channelId = '555555555555555555', otherChannelId = '666666666666666666';
+  const channel = {enabled: true, requireMention: true, users: [original]};
+  const otherChannel = {enabled: true, users: [original]};
+  await mkdir(state, {recursive: true});
+  await mkdir(path.join(root, 'templates/workspace'), {recursive: true});
+  await writeFile(path.join(root, 'compose.yaml'), 'services: {}\n');
+  await writeFile(path.join(root, 'templates/workspace/SOUL.md'), 'Shared instructions');
+  await writeFile(env, `DISCORD_APPLICATION_ID=999999999999999999\nDISCORD_GUILD_ID=${guildId}\nDISCORD_CHANNEL_ID=${channelId}\nDISCORD_USER_IDS=${original}\nDISCORD_OAUTH_CLIENT_SECRET=fixture-secret\n`);
+  await writeFile(configPath, JSON.stringify({
+    agents: {defaults: {workspace: '/workspace', thinkingDefault: 'off'}},
+    channels: {discord: {groupPolicy: 'allowlist', dmPolicy: 'disabled', guilds: {
+      [guildId]: {requireMention: true, users: [original], channels: {[channelId]: channel, [otherChannelId]: otherChannel}},
+    }}},
+    mcp: {servers: {revit: {command: 'node'}}},
+  }));
+  const args = [helper, '--dir', root, '--prepare-only'];
+  const add = [...args, '--add-discord-user', added, '--add-discord-user', extra];
+  await assert.rejects(run('bash', [...args, '--add-discord-user', '@user']), /numeric Discord User ID/);
+  for (let i = 0; i < 2; i++) await run('bash', add);
+  const users = [original, added, extra];
+  const contents = await readFile(env, 'utf8');
+  assert.deepEqual(contents.split('\n').filter(line => line.startsWith('DISCORD_USER_IDS=')), ['DISCORD_USER_IDS=' + users.join(',')]);
+  assert.match(contents, /DISCORD_OAUTH_CLIENT_SECRET=fixture-secret/);
+  assert.equal((await stat(env)).mode & 0o777, 0o600);
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  const guild = config.channels.discord.guilds[guildId];
+  assert.equal(config.channels.discord.dmPolicy, 'disabled');
+  assert.equal(guild.requireMention, true);
+  assert.deepEqual(guild.users, users);
+  assert.deepEqual(guild.channels[channelId], {...channel, users});
+  assert.deepEqual(guild.channels[otherChannelId], otherChannel);
+  assert.equal(config.mcp.servers.revit.command, 'node');
+  const batch = JSON.parse(await readFile(path.join(state, 'studio-discord-users.json'), 'utf8'));
+  assert.deepEqual(batch, [{path: 'channels.discord', value: config.channels.discord}]);
+  const accounts = JSON.parse(await readFile(path.join(studio, 'accounts.json'), 'utf8'));
+  assert.deepEqual(accounts.users.map(user => user.id), users);
+  assert.deepEqual(JSON.parse(await readFile(path.join(studio, 'active/users.json'), 'utf8')), users);
+});

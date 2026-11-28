@@ -4,16 +4,27 @@ SOURCE_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 RUNTIME_DIR=$HOME/agents/sonne
 PREPARE_ONLY=0
 CONFIGURE_LOGIN=0
+ADD_DISCORD_USERS=()
 while (($#)); do
   case "$1" in
     --dir) [[ $# -ge 2 ]] || { printf 'Missing --dir value.\n' >&2; exit 1; }; RUNTIME_DIR=$2; shift 2 ;;
     --prepare-only) PREPARE_ONLY=1; shift ;;
     --configure-login) CONFIGURE_LOGIN=1; shift ;;
-    *) printf 'Usage: bash scripts/enable-prompt-studio.sh [--dir RUNTIME] [--prepare-only] [--configure-login]\n' >&2; exit 1 ;;
+    --add-discord-user)
+      if [[ ! ${2:-} =~ ^[0-9]{17,20}$ ]]; then
+        printf 'Supply a numeric Discord User ID after --add-discord-user.\n' >&2
+        exit 1
+      fi
+      ADD_DISCORD_USERS+=("$2"); shift 2 ;;
+    *) printf 'Usage: bash scripts/enable-prompt-studio.sh [--dir RUNTIME] [--prepare-only] [--configure-login] [--add-discord-user USER_ID]...\n' >&2; exit 1 ;;
   esac
 done
 [[ $EUID -ne 0 ]] || { printf 'Run as the normal Sonne installation user.\n' >&2; exit 1; }
-python3 - "$SOURCE_ROOT" "$RUNTIME_DIR" "$CONFIGURE_LOGIN" <<'PY'
+if [[ -d $RUNTIME_DIR/.state/openclaw ]]; then
+  exec 9< "$RUNTIME_DIR/.state/openclaw"
+  flock -n 9 || { printf 'Prompt Studio setup is already running for this installation. Try again when it finishes.\n' >&2; exit 1; }
+fi
+python3 - "$SOURCE_ROOT" "$RUNTIME_DIR" "$CONFIGURE_LOGIN" "${ADD_DISCORD_USERS[@]}" <<'PY'
 import datetime, getpass, json, os, re, shutil, tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -21,6 +32,7 @@ import sys
 source = Path(sys.argv[1]).resolve()
 runtime = Path(sys.argv[2]).expanduser().resolve()
 configure_login = sys.argv[3] == '1'
+added_users = sys.argv[4:]
 def private_write(file, text):
     fd, temporary = tempfile.mkstemp(prefix='.studio-', dir=file.parent)
     try:
@@ -37,6 +49,7 @@ if (runtime/'.env').is_symlink():
 if not all(p.is_file() for p in (runtime/'.env', runtime/'compose.yaml', config_path, runtime/'templates/workspace/SOUL.md')):
     raise SystemExit('A configured Sonne runtime with SOUL.md is required. Run the installer first.')
 config = json.loads(config_path.read_text())
+before = json.dumps(config, sort_keys=True)
 defaults = config['agents']['defaults']
 agent = config['agents'].get('entries', {}).get('sonne', {})
 if agent.get('workspace', defaults.get('workspace')) != '/workspace':
@@ -62,9 +75,25 @@ for line in (runtime/'.env').read_text().splitlines():
     if '=' in line and not line.lstrip().startswith('#'):
         key, value = line.split('=', 1)
         values[key.strip()] = value.strip().strip('\"\'')
-ids = list(dict.fromkeys(values.get('DISCORD_USER_IDS', '').split(',')))
+ids = list(dict.fromkeys(values.get('DISCORD_USER_IDS', '').split(',') + added_users))
 if not ids or len(ids) > 100 or not all(re.fullmatch(r'\d{1,20}', user) for user in ids):
     raise SystemExit('Configure 1–100 permitted Discord User IDs before creating profiles.')
+if added_users:
+    discord = config.get('channels', {}).get('discord', {})
+    guild = discord.get('guilds', {}).get(values.get('DISCORD_GUILD_ID'), {})
+    channel = guild.get('channels', {}).get(values.get('DISCORD_CHANNEL_ID'), {})
+    allowed = guild.get('users')
+    if (discord.get('groupPolicy') != 'allowlist' or not channel.get('enabled')
+            or not isinstance(allowed, list) or not allowed
+            or not all(isinstance(user, str) and re.fullmatch(r'[0-9]{1,20}', user) for user in allowed)):
+        raise SystemExit('The configured Discord server and channel must have a numeric user allowlist.')
+    channel_users = channel.get('users')
+    if channel_users is not None:
+        if not isinstance(channel_users, list) or not all(isinstance(user, str) and re.fullmatch(r'[0-9]{1,20}', user) for user in channel_users):
+            raise SystemExit('The configured Discord channel must have a numeric user allowlist.')
+        if channel_users:
+            channel['users'] = list(dict.fromkeys(channel_users + added_users))
+    guild['users'] = list(dict.fromkeys(allowed + added_users))
 client_id = values.get('DISCORD_APPLICATION_ID', '')
 if not re.fullmatch(r'\d{1,20}', client_id):
     raise SystemExit('Configure a valid DISCORD_APPLICATION_ID before enabling Discord sign-in.')
@@ -97,10 +126,15 @@ except ValueError:
 public_url = public_url.rstrip('/')
 if len(secret) > 1024 or re.search(r'''[\s'"\x00$`#\\]''', secret):
     raise SystemExit('DISCORD_OAUTH_CLIENT_SECRET contains invalid characters. Enter the secret exactly as shown by Discord.')
+updates = {}
 if configure_login:
+    updates.update(DISCORD_OAUTH_CLIENT_SECRET=secret, PROMPT_STUDIO_URL=public_url)
+if added_users:
+    updates['DISCORD_USER_IDS'] = ','.join(ids)
+if updates:
     lines = (runtime/'.env').read_text().splitlines()
-    for key, value in [('DISCORD_OAUTH_CLIENT_SECRET', secret), ('PROMPT_STUDIO_URL', public_url)]:
-        lines = [line for line in lines if not line.startswith(key + '=')]
+    for key, value in updates.items():
+        lines = [line for line in lines if line.partition('=')[0].strip() != key]
         lines.append(key + '=' + value)
     private_write(runtime/'.env', '\n'.join(lines) + '\n')
 callback = public_url + '/auth/discord/callback'
@@ -124,7 +158,6 @@ for asset in (source/'prototypes/prompt-studio/openclaw-plugin').iterdir():
     (plugin/asset.name).chmod(0o644)
 if plugin.stat().st_mode & 0o022 or any((plugin/name).stat().st_mode & 0o022 for name in ('index.mjs', 'openclaw.plugin.json', 'package.json')):
     raise SystemExit('Plugin permissions are still writable by other users. Use a Linux filesystem for the Sonne runtime.')
-before = json.dumps(config, sort_keys=True)
 defaults['bootstrapMaxChars'] = max(40000, defaults.get('bootstrapMaxChars', 0))
 defaults['bootstrapTotalMaxChars'] = max(80000, defaults.get('bootstrapTotalMaxChars', 0))
 plugins = config.setdefault('plugins', {})
@@ -146,6 +179,11 @@ if before != json.dumps(config, sort_keys=True):
     with os.fdopen(fd, 'w') as stream:
         json.dump(config, stream, indent=2); stream.write('\n')
     os.chmod(temporary, 0o600); os.replace(temporary, config_path)
+if added_users:
+    # Update OpenClaw's stored channel settings as well as the JSON projection.
+    private_write(config_path.with_name('studio-discord-users.json'), json.dumps([
+        {'path': 'channels.discord', 'value': discord},
+    ]) + '\n')
 print('Prepared personal Prompt Studio profiles. Shared agent instructions have not been changed.')
 print('Prompt Studio: ' + public_url)
 print('Register this OAuth2 redirect in the Discord Developer Portal: ' + callback)
@@ -161,6 +199,13 @@ fi
 COMPOSE=("${DOCKER[@]}" compose -p sonne --env-file .env -f compose.yaml)
 if [[ -f compose.override.yaml ]]; then COMPOSE+=(-f compose.override.yaml); fi
 COMPOSE+=(-f compose.prompt-studio.yaml)
+if ((${#ADD_DISCORD_USERS[@]})); then
+  "${COMPOSE[@]}" run --rm --no-deps -T openclaw node dist/index.js config set \
+    --batch-file /home/node/.openclaw/studio-discord-users.json
+fi
 "${COMPOSE[@]}" run --rm --no-deps -T openclaw node dist/index.js config validate --json
 "${COMPOSE[@]}" up -d --build --force-recreate --wait --wait-timeout 180 prompt-studio openclaw
+if ((${#ADD_DISCORD_USERS[@]})); then
+  printf 'Discord user access updated.\n'
+fi
 printf 'Prompt Studio is running. Once Discord sign-in is configured, select Apply to Sonne to update your personal prompt.\n'

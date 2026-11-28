@@ -145,7 +145,15 @@ The host binding defaults to `127.0.0.1:9080`. For team access from other machin
 
 Set `PROMPT_STUDIO_PORT` for another host port and `PROMPT_STUDIO_BIND` for another host binding. With SSH forwarding, use the same localhost origin and port registered in Discord.
 
-To add or remove a user, edit `DISCORD_USER_IDS` in the private runtime `.env` and rerun the installer or update the Discord allowlist configuration and helper together. Removed users lose web access and prompt selection after service recreation; their stored projects and files are retained for the operator.
+To grant a Discord user access to Prompt Studio and the configured Sonne channel, run this from the source checkout with their numeric User ID.
+
+```sh
+bash scripts/enable-prompt-studio.sh --add-discord-user 123456789012345678
+```
+
+Repeat `--add-discord-user USER_ID` to add several users at once. Use `--dir` if Sonne was installed outside `~/agents/sonne`. The helper reloads the gateway and Prompt Studio with the updated allowlist.
+
+To remove someone, remove their ID from `DISCORD_USER_IDS` in the private runtime `.env` and rerun the installer. Their stored profiles and files are retained.
 
 Storage lives under `.state/prompt-studio`:
 
