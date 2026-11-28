@@ -574,6 +574,31 @@ def watch_publications(runtime, processes):
         time.sleep(3)
 
 
+def quote_powershell(value):
+    return "'" + value.replace("'", "''") + "'"
+
+
+def windows_powershell(command):
+    encoded = base64.b64encode(command.encode('utf-16-le')).decode('ascii')
+    return subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+                          capture_output=True, text=True, errors='replace', timeout=10)
+
+
+def publish_windows_enrollment(source, destination):
+    # The native rename preserves the ACL and refuses to replace an existing file.
+    result = windows_powershell(f"""
+try {{
+    [IO.File]::Move({quote_powershell(source)}, {quote_powershell(destination)})
+}} catch {{
+    [Console]::Error.WriteLine($_.Exception.GetBaseException().Message)
+    exit 1
+}}
+""")
+    if result.returncode:
+        detail = result.stderr.strip() or f'PowerShell exited with status {result.returncode}.'
+        raise SetupError('Windows could not publish the enrollment file. ' + detail[:240])
+
+
 def deliver_enrollment(enrollment, checkout, config_name='config.json'):
     if 'microsoft' not in platform.release().lower() and not os.environ.get('WSL_DISTRO_NAME'):
         print(f'Transfer {enrollment} privately to the Revit workstation.', flush=True)
@@ -628,10 +653,7 @@ def deliver_enrollment(enrollment, checkout, config_name='config.json'):
             print('Revit tunnel URL updated. Restart the Windows client to reconnect.', flush=True)
             return target
         shutil.copyfile(enrollment, temp)
-        try:
-            os.link(temp, target)
-        except FileExistsError:
-            raise SetupError('The Windows enrollment changed during setup. Rerun setup to verify it.') from None
+        publish_windows_enrollment(windows_path(temp), display)
     finally:
         temp.unlink(missing_ok=True)
     write_private(location, windows_path(checkout) + '\n')
@@ -651,9 +673,6 @@ fetch(process.argv[1], {signal: AbortSignal.timeout(3000), redirect: 'error'})
     process.exitCode = 1;
   });
 """
-    def quote_powershell(value):
-        return "'" + value.replace("'", "''") + "'"
-
     command = f"""
 $ErrorActionPreference = 'Stop'
 $env:NODE_EXTRA_CA_CERTS = {quote_powershell(windows_certificate)}
@@ -668,9 +687,7 @@ if (!$node) {{
 & $node -e {quote_powershell(probe)} {quote_powershell(url)}
 exit $LASTEXITCODE
 """
-    encoded = base64.b64encode(command.encode('utf-16-le')).decode('ascii')
-    result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-                            capture_output=True, text=True, errors='replace', timeout=10)
+    result = windows_powershell(command)
     if result.returncode:
         output = result.stderr or result.stdout
         detail = next((line.strip() for line in reversed(output.splitlines()) if line.startswith('HTTPS probe:')), '')

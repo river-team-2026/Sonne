@@ -270,10 +270,19 @@ class IntegratedAccTests(unittest.TestCase):
             self.assertEqual(json.loads(target.read_text())['command'], 'node')
             self.assertEqual(json.loads(target.read_text())['url'], 'https://new.example/revit/')
             self.assertEqual(list(target.parent.iterdir()), [target])
-            local = acc.deliver_enrollment(enrollment, checkout, config_name='config-local.json')
+            with patch.object(acc.os, 'link', side_effect=PermissionError('Hard links unavailable')):
+                local = acc.deliver_enrollment(enrollment, checkout, config_name='config-local.json')
             self.assertEqual(local.name, 'config-local.json')
             self.assertEqual(local.read_bytes(), enrollment.read_bytes())
             self.assertEqual(json.loads(target.read_text())['command'], 'node')
+            candidate = local.with_name("other workstation's config.json")
+            candidate.write_text('Do not replace the registered file.')
+            paths = [acc.subprocess.check_output(['wslpath', '-w', str(path)], text=True).strip()
+                     for path in (candidate, local)]
+            with self.assertRaisesRegex(acc.SetupError, 'could not publish the enrollment file'):
+                acc.publish_windows_enrollment(*paths)
+            self.assertEqual(local.read_bytes(), enrollment.read_bytes())
+            self.assertTrue(candidate.is_file())
 
     def test_local_mode_dispatches_without_starting_a_quick_tunnel(self):
         args = acc.argparse.Namespace(runtime=self.runtime, local_revit=True)
