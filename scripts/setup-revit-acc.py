@@ -373,13 +373,13 @@ def write_json(path, value):
     write_private(path, json.dumps(value, ensure_ascii=False, indent=2) + '\n')
 
 
-def compose_command(runtime):
+def compose_command(runtime, profile='revit-publications'):
     files = ['compose.yaml', 'compose.override.yaml', 'compose.prompt-studio.yaml', 'compose.revit.yaml']
     command = ['docker', 'compose', '--env-file', '.env']
     for name in files:
         if (runtime / name).is_file():
             command.extend(('-f', name))
-    return command + ['--profile', 'revit-publications']
+    return command + ['--profile', profile]
 
 
 def deploy(runtime, directory):
@@ -687,13 +687,17 @@ def setup_local_revit(runtime):
     client_id = 'windows-local'
     subprocess.run(['bash', str(source / 'scripts/setup-revit-server.sh'), str(runtime),
                     url, client_id, 'Local Revit workstation'], check=True)
-    caddyfile = Path('integrations/revit/Caddyfile.local')
-    if (source / caddyfile).resolve() != (runtime / caddyfile).resolve():
-        shutil.copyfile(source / caddyfile, runtime / caddyfile)
-    compose = compose_command(runtime)
+    caddyfile = runtime / 'integrations/revit/Caddyfile.local'
+    source_caddyfile = source / 'integrations/revit/Caddyfile.local'
+    if source_caddyfile.resolve() != caddyfile.resolve():
+        shutil.copyfile(source_caddyfile, caddyfile)
+    # The public config must be readable by Caddy with all capabilities dropped.
+    caddyfile.chmod(0o644)
+    compose = compose_command(runtime, profile='revit-local')
     if os.environ.get('SONNE_DOCKER_USE_SUDO') == '1':
         compose = ['sudo', *compose]
-    subprocess.run([*compose, 'up', '-d', '--no-deps', 'revit-local-https'], cwd=runtime, check=True)
+    subprocess.run([*compose, 'up', '-d', '--no-deps', '--force-recreate', 'revit-local-https'],
+                   cwd=runtime, check=True)
     with TemporaryDirectory(prefix='sonne-local-tls-') as directory:
         cert = Path(directory) / 'local-ca.crt'
         deadline = time.monotonic() + 30
@@ -707,6 +711,9 @@ def setup_local_revit(runtime):
                     cert.write_bytes(result.stdout)
                     check_windows_https(url + 'health', cert)
                     break
+                error = result.stderr.decode('utf-8', errors='replace').strip()
+                if error:
+                    detail = 'Could not read the local CA from Caddy. ' + error.splitlines()[-1][:240]
             except SetupError as error:
                 detail = str(error)
             except subprocess.TimeoutExpired:

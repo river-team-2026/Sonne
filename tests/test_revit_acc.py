@@ -282,6 +282,22 @@ class IntegratedAccTests(unittest.TestCase):
         local.assert_called_once_with(self.runtime.resolve())
         quick.assert_not_called()
 
+    def test_local_caddyfile_is_readable_despite_private_installer_umask(self):
+        (self.runtime / 'integrations/revit').mkdir(parents=True)
+        config = self.runtime / 'integrations/revit/Caddyfile.local'
+        config.touch(mode=0o600)
+        previous = acc.os.umask(0o077)
+        try:
+            with patch.dict(acc.os.environ, WSL_DISTRO_NAME='Fixture'):
+                stop = RuntimeError('Stop before starting containers.')
+                with patch.object(acc.subprocess, 'run', side_effect=[None, stop]) as run:
+                    with self.assertRaisesRegex(RuntimeError, 'Stop before starting containers'):
+                        acc.setup_local_revit(self.runtime)
+        finally:
+            acc.os.umask(previous)
+        self.assertEqual(config.stat().st_mode & 0o777, 0o644)
+        self.assertIn('revit-local', run.call_args.args[0])
+
     def test_deploy_keeps_the_selected_archive_directory_when_docker_needs_sudo(self):
         directory = self.runtime / '.state/revit-publications-acc'
         with patch.object(acc.shutil, 'copyfile'), patch.dict(acc.os.environ, SONNE_DOCKER_USE_SUDO='1'):
