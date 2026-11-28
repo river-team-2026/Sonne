@@ -58,9 +58,9 @@ services:
     mem_limit: 160m
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9092/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-
-volumes:
-  revit-local-tls:
     logging:
       driver: json-file
       options: {max-size: 5m, max-file: "2"}
+
+volumes:
+  revit-local-tls:
