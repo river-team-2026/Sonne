@@ -37,6 +37,25 @@ export const OWNER_DISCIPLINES = [
   {id: 'facilities', name: 'LCFM'}
 ];
 
+const MAX_PROFILES_PER_DISCIPLINE = 20;
+export function teamRole(id) {
+  if (typeof id !== 'string') return;
+  const [base, number, ...extra] = id.split('-');
+  const discipline = DISCIPLINES.find(d => d.id === base);
+  if (!discipline || extra.length) return;
+  if (number === undefined) return {...discipline, discipline:base};
+  if (/^(?:[2-9]|1\d|20)$/.test(number)) return {...discipline, id, discipline:base, name:`${base === 'architecture' ? 'Arch' : discipline.short}-${number}`};
+}
+export const teamRoles = shared => [...DISCIPLINES.map(d => d.id), ...(shared.extraRoles || [])].map(teamRole);
+
+export function nextTeamRole(shared, discipline) {
+  if (!DISCIPLINES.some(d => d.id === discipline)) return;
+  for (let number = 2; number <= MAX_PROFILES_PER_DISCIPLINE; number++) {
+    const id = `${discipline}-${number}`;
+    if (!shared.extraRoles.includes(id)) return teamRole(id);
+  }
+}
+
 export const COMMON_FIELDS = [
   { id: 'lead', label: 'Discipline lead', placeholder: 'Name or team' },
   { id: 'format', label: 'Preferred response format', type: 'select', options: ['Narrative + comparison table', 'Structured recommendations', 'Checklist', 'Technical summary'] },
@@ -106,6 +125,36 @@ export const INFORMATION_STARTERS = {
   services: ['Plant space and distribution routes', 'Energy and comfort requirements', 'Coordination changes and service clearances'],
   facilities: ['Maintenance access and operating requirements', 'Lifecycle costs and replacement cycles', 'Asset information needed for handover']
 };
+const PRIORITY_SUGGESTIONS = {
+  architecture: {
+    structure: ['Structural grid axes', 'Materials and technologies', 'Beam depths', 'Column and structural wall layout', 'Slab thicknesses'],
+    services: ['Required rooms', 'Required room areas', 'Duct sizes', 'Shaft dimensions'],
+    coordination: ['Building siting constraints due to construction equipment', 'Maximum element sizes', 'Manufacturers for the selected technologies'],
+    facilities: ['Operations strategy', 'Revenue opportunities']
+  },
+  structure: {
+    architecture: ['Auditorium spans', 'Vertical circulation', 'Windows', 'Ground floor layout', 'First floor layout', 'Second floor layout', 'Façade materials for load calculations'],
+    services: ['Volumes', 'Duct sizes where ducts cross the structure', 'Air handling unit loads'],
+    coordination: ['Maximum element sizes', 'Available materials']
+  },
+  facilities: {
+    architecture: ['Areas', 'Bill of quantities', 'Materials', 'Volume'],
+    services: ['Energy analysis', 'Product data', 'Carbon metrics', 'Thermal performance'],
+    coordination: ['Bill of quantities', 'Materials', 'Costs', 'Manufacturers and product data']
+  },
+  services: {
+    architecture: ['Areas', 'Bill of quantities', 'Materials', 'Volume'],
+    structure: ['Materials', 'Carbon metrics', 'Bill of quantities'],
+    coordination: ['Material specifications', 'Maximum element sizes', 'Available manufacturers']
+  },
+  coordination: {
+    architecture: ['Building positioning', 'Areas', 'Volume', 'Element dimensions', 'Envelope materials', 'Interior materials'],
+    structure: ['Materials', 'Element dimensions'],
+    services: ['Materials', 'Technologies', 'Equipment list', 'Element dimensions'],
+    facilities: ['Maintenance costs', 'End-of-life dates', 'Replacement schedule']
+  }
+};
+export const prioritySuggestions = (recipient, provider) => PRIORITY_SUGGESTIONS[teamRole(recipient)?.discipline]?.[teamRole(provider)?.discipline] || [];
 function createPersonal() {
   return {discipline: '', introduction: '', goals: '', values: '', needs: Object.fromEntries(DISCIPLINES.map(d => [d.id, []])), notes: []};
 }
@@ -113,7 +162,7 @@ function validatePersonal(input) {
   const result = createPersonal();
   if (input === undefined) return result;
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid personal settings.');
-  if (input.discipline && !DISCIPLINES.some(d => d.id === input.discipline)) throw new Error('Choose a valid discipline.');
+  if (input.discipline && !teamRole(input.discipline)) throw new Error('Choose a valid discipline.');
   result.discipline = input.discipline || '';
   for (const key of ['introduction', 'goals', 'values']) {
     if (typeof input[key] !== 'string' || input[key].length > 8000) throw new Error('Personal text exceeds its limit.');
@@ -137,7 +186,7 @@ export function createShared() {
   const project = Object.fromEntries(PROJECT_FIELDS.map(f => [f.id, f.options ? f.options[0] : '']));
   team.name = 'River Team'; project.name = 'Untitled project'; project.stage = 'Concept design';
   const owners = Object.fromEntries(OWNER_DISCIPLINES.map(d => [d.id, {name: '', feedback: ''}]));
-  return {schemaVersion: 1, team, project, owners, sources: [], informationPlan: [], costCategories: []};
+  return {schemaVersion: 1, team, project, owners, sources: [], informationPlan: [], costCategories: [], extraRoles: []};
 }
 function validateCostCategories(input = []) {
   if (!Array.isArray(input) || input.length > MAX_COST_CATEGORIES || new Set(input.map(c => c?.id)).size !== input.length) throw new Error('Other costs supports up to 30 unique categories.');
@@ -151,10 +200,10 @@ export const totalProjectCosts = shared => PROJECT_FIELDS.filter(f => f.unitKey 
 export const isProjectHistoryField = id => PROJECT_FIELDS.some(f => f.id === id)
   || OWNER_DISCIPLINES.some(d => ['name', 'feedback'].some(key => id === `owner:${d.id}:${key}`))
   || (typeof id === 'string' && /^(?:costCategory|costCategoryName):[A-Za-z0-9_-]{1,100}$/.test(id));
-function validateInformationPlan(input = []) {
+function validateInformationPlan(input = [], roles) {
   if (!Array.isArray(input) || input.length > MAX_DELIVERIES || new Set(input.map(item => item?.id)).size !== input.length) throw new Error('The shared plan supports up to 30 unique deliveries.');
   return input.map(item => {
-    if (!item || !/^[A-Za-z0-9_-]{1,100}$/.test(item.id) || !DISCIPLINES.some(d => d.id === item.recipient) || (item.provider !== '' && !DISCIPLINES.some(d => d.id === item.provider)) || !DELIVERY_STATUSES.some(s => s.id === item.status)) throw new Error('Invalid information delivery.');
+    if (!item || !/^[A-Za-z0-9_-]{1,100}$/.test(item.id) || !roles.has(item.recipient) || (item.provider !== '' && !roles.has(item.provider)) || !DELIVERY_STATUSES.some(s => s.id === item.status)) throw new Error('Invalid information delivery.');
     const type = item.type === undefined ? 'information' : item.type;
     if (!REQUEST_TYPES.some(t => t.id === type)) throw new Error('Choose information or action as the request type.');
     for (const field of ['information', 'task']) if (typeof item[field] !== 'string' || !item[field].trim() || item[field].length > 300) throw new Error('Enter the information and the task it unlocks, using up to 300 characters each.');
@@ -202,7 +251,10 @@ export function validateShared(input) {
   const files = createProject(false); files.sources = input.sources;
   result.sources = validateProject(files).sources;
   if (result.sources.some(s => s.discipline !== 'project')) throw new Error('Shared files must belong to the project.');
-  result.informationPlan = validateInformationPlan(input.informationPlan);
+  const extraRoles = input.extraRoles === undefined ? [] : input.extraRoles;
+  if (!Array.isArray(extraRoles) || new Set(extraRoles).size !== extraRoles.length || extraRoles.some(id => !teamRole(id) || teamRole(id).discipline === id)) throw new Error('Invalid additional team profiles.');
+  result.extraRoles = [...extraRoles];
+  result.informationPlan = validateInformationPlan(input.informationPlan, new Set(teamRoles(result).map(role => role.id)));
   result.costCategories = validateCostCategories(input.costCategories);
   return result;
 }
@@ -230,19 +282,19 @@ export function compileTeamPrompt(shared) {
   if (!plan.length) lines.push('No delivery priorities have been assigned.');
   else {
     lines.push('The team orders requests from highest to lowest priority. The PROVIDER supplies the information or performs the action; the RECIPIENT waits for it. The first unfinished request is next. Status meanings: Awaiting data = not supplied; Ready to share = prepared but NOT delivered; To do = action NOT completed; In progress = action NOT completed; Delivered or Completed = finished. Every unfinished request blocks its listed dependent task, even when there are no errors. Never claim that unfinished work has been completed. Use each request’s exact Needed by date; project milestones do not replace or postpone it. Earlier assistant replies and personal notes do not change these facts. Use request IDs when reporting status. For pull planning: work backwards from the dependent task and date. Do not start a dependent task before its required information has been delivered or its requested action has been completed. Suggest work that can proceed in parallel and flag conflicts between the stated order and deadlines; ask the team before changing priorities, dates or statuses.');
-    lines.push(next ? 'Next recipient: ' + DISCIPLINES.find(d => d.id === next.recipient).name + (next.type === 'action' ? '. Action: ' : '. Information: ') + next.information : 'All listed requests are complete.');
-    if (next) lines.push('Next request ID: ' + next.id, 'Next provider: ' + (DISCIPLINES.find(d => d.id === next.provider)?.name || 'To be agreed'), 'Next request needed by: ' + (next.neededBy || 'To be agreed'), 'Next request completed: NO', 'Next dependent task blocked: YES — waiting for this request.');
+    lines.push(next ? 'Next recipient: ' + teamRole(next.recipient).name + (next.type === 'action' ? '. Action: ' : '. Information: ') + next.information : 'All listed requests are complete.');
+    if (next) lines.push('Next request ID: ' + next.id, 'Next provider: ' + (teamRole(next.provider)?.name || 'To be agreed'), 'Next request needed by: ' + (next.neededBy || 'To be agreed'), 'Next request completed: NO', 'Next dependent task blocked: YES — waiting for this request.');
     for (const [i, item] of plan.entries()) {
-      const recipient = DISCIPLINES.find(d => d.id === item.recipient).name, provider = DISCIPLINES.find(d => d.id === item.provider)?.name || 'To be agreed', complete = item.status === 'delivered';
+      const recipient = teamRole(item.recipient).name, provider = teamRole(item.provider)?.name || 'To be agreed', complete = item.status === 'delivered';
       lines.push('', `### ${i + 1}. [${item.id}] ${provider} → ${recipient}`, 'Request ID: ' + item.id, 'Recipient (receives): ' + recipient, 'Provided by: ' + provider, 'Provider supplies the information or performs the action; the recipient is not the provider.', (item.type === 'action' ? 'Action: ' : 'Information: ') + item.information, 'Needed by: ' + (item.neededBy || 'To be agreed'), 'Status: ' + deliveryStatusLabel(item), 'Request completed: ' + (complete ? 'YES' : 'NO'), 'Dependent task blocked by this request: ' + (complete ? 'NO — this request is finished; other dependencies may still block the task.' : 'YES — ' + (item.type === 'action' ? 'the action is not completed.' : item.status === 'ready' ? 'the information is ready but has not been delivered.' : 'the information has not been delivered.')), 'Unlocks task: ' + item.task);
     }
   }
-  lines.push('', '## Current applied delivery facts', 'These are computed facts for status answers. Provider and recipient are team disciplines. No named individual is assigned to these requests; owner names are NOT provider assignments. Keep requests separate and preserve their rank. Priority order is NOT a dependency between requests. An unfinished request blocks only its explicitly listed dependent task; do not invent dependencies on other request IDs. A deadline conflict does not authorize reordering or rescheduling. For a question about the most urgent or next work, give the next request and at most the two following unfinished requests, with ID, provider → recipient, exact date, status and the blocked dependent task from the last column. Report deadline conflicts separately; expand only when asked.', next ? 'First unfinished request IDs in priority order: ' + plan.filter(item => item.status !== 'delivered').slice(0, 3).map(item => item.id).join(', ') + '.' : 'No unfinished requests.', '| Rank | Request ID | Provider | Recipient | Exact deadline | Status | Request completed | Blocks its dependent task | Dependent task |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
+  lines.push('', '## Current applied delivery facts', 'These are computed facts for status answers. Provider and recipient are team role profiles. Numbered profiles represent distinct roles within a discipline. No named individual is assigned to these requests; owner names are NOT provider assignments. Keep requests separate and preserve their rank. Priority order is NOT a dependency between requests. An unfinished request blocks only its explicitly listed dependent task; do not invent dependencies on other request IDs. A deadline conflict does not authorize reordering or rescheduling. For a question about the most urgent or next work, give the next request and at most the two following unfinished requests, with ID, provider → recipient, exact date, status and the blocked dependent task from the last column. Report deadline conflicts separately; expand only when asked.', next ? 'First unfinished request IDs in priority order: ' + plan.filter(item => item.status !== 'delivered').slice(0, 3).map(item => item.id).join(', ') + '.' : 'No unfinished requests.', '| Rank | Request ID | Provider | Recipient | Exact deadline | Status | Request completed | Blocks its dependent task | Dependent task |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
   let latestEarlier;
   const conflicts = [];
   for (const [i, item] of plan.entries()) {
     const complete = item.status === 'delivered';
-    lines.push(`| ${i + 1} | ${item.id} | ${DISCIPLINES.find(d => d.id === item.provider)?.name || 'Not assigned'} | ${DISCIPLINES.find(d => d.id === item.recipient).name} | ${item.neededBy || 'Not set'} | ${deliveryStatusLabel(item)} | ${complete ? 'YES' : 'NO'} | ${complete ? 'NO (other dependencies may remain)' : 'YES'} | ${item.task.replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ')} |`);
+    lines.push(`| ${i + 1} | ${item.id} | ${teamRole(item.provider)?.name || 'Not assigned'} | ${teamRole(item.recipient).name} | ${item.neededBy || 'Not set'} | ${deliveryStatusLabel(item)} | ${complete ? 'YES' : 'NO'} | ${complete ? 'NO (other dependencies may remain)' : 'YES'} | ${item.task.replaceAll('|', '\\|').replace(/[\r\n]+/g, ' ')} |`);
     if (!complete && item.neededBy) {
       if (latestEarlier && item.neededBy < latestEarlier.neededBy) conflicts.push(`${item.id} is lower priority but due ${item.neededBy}, earlier than ${latestEarlier.id} (${latestEarlier.neededBy}). Ask the team to resolve this; keep both dates and the existing order.`);
       if (!latestEarlier || item.neededBy > latestEarlier.neededBy) latestEarlier = item;
@@ -295,7 +347,7 @@ export function createProjectMemory(shared, history = [], revision = 0, at = new
   return {schemaVersion: 1, revision, updatedAt: at, owners, performance: Object.fromEntries(performanceFields.map(f => [f.id, shared.project[f.id]])), costs, files, history, context};
 }
 export function compilePersonalPrompt(state, identity) {
-  const p = state.personal || createPersonal(), role = DISCIPLINES.find(d => d.id === p.discipline);
+  const p = state.personal || createPersonal(), role = teamRole(p.discipline);
   const lines = ['# Personal brief', 'These preferences apply to the current authenticated Discord sender as a team member. Their selected discipline describes their team role. Reconcile these preferences with the shared project requirements; flag conflicting requirements and ask for a decision.'];
   const mention = discordMention(identity?.id);
   if (mention) {

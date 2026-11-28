@@ -6,8 +6,44 @@ import {fixture} from './fixture.mjs';
 import {createStudioServer} from '../server.mjs';
 import {personalPrompt,isPlanningStatusQuestion} from '../openclaw-plugin/index.mjs';
 import {DISCIPLINES, createShared, createProject, validateShared, validateProject, compileTeamPrompt, nextInformationDelivery, disciplinePriorities, moveDisciplinePriority, deliveryStatusLabel} from '../dist/model.mjs';
+import {compilePersonalPrompt, nextTeamRole, prioritySuggestions, teamRoles} from '../dist/model.mjs';
 
 const delivery = (id, recipient, overrides = {}) => ({id, recipient, type:'information', information:'Final structural grid', provider:'structure', task:'Coordinate service routes', neededBy:'2026-10-22', status:'awaiting', ...overrides});
+
+test('numbered team profiles are shared while their priorities and personal selections stay distinct', async t => {
+  const f = await fixture(t), alice = await f.login(0), bob = await f.login(1);
+  const old = createShared();
+  delete old.extraRoles;
+  const shared = validateShared(old);
+  assert.equal(teamRoles(shared).length, 5);
+  for (const [discipline, name] of [['coordination', 'CM-2'], ['coordination', 'CM-3'], ['services', 'MEP-2']]) {
+    const next = nextTeamRole(shared, discipline);
+    assert.equal(next.name, name);
+    shared.extraRoles.push(next.id);
+  }
+  shared.informationPlan = [
+    delivery('original', 'services', {provider:'coordination'}),
+    delivery('numbered', 'services-2', {provider:'coordination-2'})
+  ];
+  for (const extraRoles of [null, ['coordination'], ['coordination-1'], ['coordination-2', 'coordination-2']])
+    assert.throws(() => validateShared({...shared, extraRoles}));
+  assert.throws(() => validateShared({...shared, extraRoles:[]}));
+  assert.equal((await f.api('/api/team', 'PUT', {revision:0, workspace:shared}, alice)).status, 200);
+  const saved = (await (await f.api('/api/team', 'GET', undefined, bob)).json()).workspace;
+  assert.deepEqual(saved.extraRoles, shared.extraRoles);
+  assert.deepEqual(disciplinePriorities(saved, 'services-2', 'coordination-2').map(item => item.id), ['numbered']);
+  assert.match(compileTeamPrompt(saved), /CM-2 → MEP-2/);
+  assert.doesNotMatch(compileTeamPrompt(saved), /Maximum element sizes/);
+  assert.ok(prioritySuggestions('services-2', 'coordination-2').includes('Maximum element sizes'));
+  assert.deepEqual(prioritySuggestions('services', 'services-2'), []);
+  const personal = createProject(false);
+  personal.personal.discipline = 'services-2';
+  assert.equal((await f.api('/api/workspace', 'PUT', {revision:0, workspace:personal}, alice)).status, 200);
+  const aliceSaved = (await (await f.api('/api/workspace', 'GET', undefined, alice)).json()).workspace;
+  assert.match(compilePersonalPrompt(aliceSaved), /selected discipline: MEP-2/);
+  const bobSaved = (await (await f.api('/api/workspace', 'GET', undefined, bob)).json()).workspace;
+  assert.equal(bobSaved.personal.discipline, '');
+});
 
 test('older shared workspaces gain an empty plan without publishing personal requests', () => {
   const old = createShared(); delete old.informationPlan;

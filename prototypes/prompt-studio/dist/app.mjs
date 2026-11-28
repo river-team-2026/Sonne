@@ -1,4 +1,4 @@
-import {DISCIPLINES, OWNER_DISCIPLINES, TEAM_FIELDS, PROJECT_FIELDS, INFORMATION_STARTERS, SOURCE_CATEGORIES, MAX_FILE, MAX_TOTAL, MAX_SOURCES, TEXT_LIMIT, MAX_DELIVERIES, MAX_COST_CATEGORIES, totalProjectCosts, REQUEST_TYPES, DELIVERY_STATUSES, deliveryStatusLabel, nextInformationDelivery, disciplinePriorities, moveDisciplinePriority, createProject, createShared, validateProject, validateShared, compilePrompt, compileTeamPrompt, compilePersonalPrompt, compileWorkspacePrompt, projectChanges, historyCSV, compareLines} from './model.mjs';
+import {DISCIPLINES, teamRole as role, teamRoles, nextTeamRole, prioritySuggestions, OWNER_DISCIPLINES, TEAM_FIELDS, PROJECT_FIELDS, INFORMATION_STARTERS, SOURCE_CATEGORIES, MAX_FILE, MAX_TOTAL, MAX_SOURCES, TEXT_LIMIT, MAX_DELIVERIES, MAX_COST_CATEGORIES, totalProjectCosts, REQUEST_TYPES, DELIVERY_STATUSES, deliveryStatusLabel, nextInformationDelivery, disciplinePriorities, moveDisciplinePriority, createProject, createShared, validateProject, validateShared, compilePrompt, compileTeamPrompt, compilePersonalPrompt, compileWorkspacePrompt, projectChanges, historyCSV, compareLines} from './model.mjs';
 
 import {requestJSON, requestResponse} from './request.mjs';
 
@@ -24,7 +24,6 @@ const glyphs = {
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${glyphs[name] || glyphs.document}</svg>`;
 const date = value => new Date(value).toLocaleString('en-GB', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
 const fileSize = n => n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
-const role = id => DISCIPLINES.find(d => d.id === id);
 let state = createProject(false), shared = createShared(), history = [], view = 'home', tab = '', need = 'architecture', priorityFolder = '', profile = null;
 let preview = new URL(location.href).searchParams.get('preview') === '1', connected = false, oauthConfigured = false, conflict = false, failed = false;
 let revisions = {personal:0, shared:0}, applied = {personal:null, shared:null}, dirty = {personal:0, shared:0}, saved = {personal:0, shared:0};
@@ -152,7 +151,7 @@ function sidebar() {
   return `<aside class="sidebar"><a class="brand" href="/" data-action="home" aria-label="Sonne home"><img class="brand-logo" src="/logo.png" alt="">Sonne</a><nav aria-label="Workspace navigation">${[['team','sun','Sonne & team'],['project','project','Project'],['profile','profile',profileTitle()]].map(([id,glyph,label]) => `<button class="nav-item ${view === id ? 'selected' : ''}" data-view="${id}" ${view === id ? 'aria-current="page"' : ''}>${icon(glyph)}<span>${label}</span></button>`).join('')}</nav><div class="sidebar-bottom"><button class="nav-item ${view === 'prompt' ? 'selected' : ''}" data-view="prompt">${icon('document')}<span>Review prompt</span></button><button class="prototype-link" data-action="account">${preview ? 'Leave preview' : 'Account & backup'}</button></div></aside>`;
 }
 function home() {
-  return `<section class="home role-home"><div class="home-emblem" aria-hidden="true"><img src="/logo.png" alt=""></div><p class="eyebrow">Your team’s assistant</p><h1><button class="team-name-button" data-action="rename-team" title="Change team name">${esc(shared.team.name)}${icon('edit')}</button></h1><p>Choose your discipline to begin prompting</p><div class="role-grid">${DISCIPLINES.map(d => `<button class="role-card ${state.personal.discipline === d.id ? 'chosen' : ''}" data-role="${d.id}"><span class="role-avatar"><img src="/role-${d.id}.png" width="86" height="86" alt=""></span><span>${esc(d.name)}</span></button>`).join('')}</div><button class="home-prompt-link" data-view="project">Open the project ${icon('arrow')}</button></section>`;
+  return `<section class="home role-home"><div class="home-emblem" aria-hidden="true"><img src="/logo.png" alt=""></div><p class="eyebrow">Your team’s assistant</p><h1><button class="team-name-button" data-action="rename-team" title="Change team name">${esc(shared.team.name)}${icon('edit')}</button></h1><p>Choose your team profile</p><div class="role-grid">${teamRoles(shared).map(d => `<button class="role-card ${state.personal.discipline === d.id ? 'chosen' : ''}" data-role="${d.id}"><span class="role-avatar"><img src="/role-${d.discipline}.png" width="86" height="86" alt=""></span><span>${esc(d.name)}</span></button>`).join('')}</div><div class="home-role-actions"><button class="button secondary" data-action="add-role">${icon('plus')} Add profile</button><button class="home-prompt-link" data-view="project">Open the project ${icon('arrow')}</button></div></section>`;
 }
 function teamNameDialog() {
   modal('Change team name',`<form id="team-name-form"><div class="field"><label for="team-name-input">Team name</label><input id="team-name-input" name="teamName" value="${esc(shared.team.name)}" maxlength="300" required></div><p class="help-text">${preview ? 'Preview changes stay in this tab.' : 'This name is shared with everyone on your team.'}</p><div class="dialog-tools"><button class="button secondary" type="button" data-action="close">Cancel</button><button class="button primary" type="submit">Save name</button></div></form>`);
@@ -194,26 +193,54 @@ function informationPlan() {
   const plan = shared.informationPlan, next = nextInformationDelivery(shared);
   return `<div class="delivery-heading"><p class="section-hint">Who needs input first? Order information and actions to unblock the team’s tasks. Drag or use the arrows.</p><button class="button secondary" data-action="add-delivery">${icon('plus')} Add request</button></div>${plan.length ? `<p class="delivery-next" role="status">${next ? `Next recipient: <strong>${esc(role(next.recipient).name)}</strong><span>${esc(next.information)} · ${deliveryStatusLabel(next)}</span>` : 'All listed requests are complete.'}</p>` : '<div class="empty-small">Add the information or action a discipline needs before its next task can start.</div>'}${deliveryList(plan)}<p class="help-text">Shared with your team and each discipline’s priority folders. The first unfinished request is next; completed requests are skipped. Apply the prompt so Sonne can use this order, deadlines and dependencies for pull planning.</p>`;
 }
+function suggestionList(recipient, provider, requests) {
+  const suggestions = prioritySuggestions(recipient, provider).map((text, index) =>
+    requests.some(item => item.information === text) ? '' : `<li><button type="button" class="priority-suggestion" data-action="use-suggestion" data-suggestion="${index}">${icon('plus')}<span>${esc(text)}</span></button></li>`
+  ).join('');
+  return suggestions ? `<ul class="priority-suggestions" aria-label="Suggested requests">${suggestions}</ul>` : '';
+}
 function disciplineFolders() {
   const recipient = role(state.personal.discipline);
-  if (!recipient) return '<div class="empty-small">Choose your discipline in About you to open your priority folders.</div><button class="button secondary" data-tab="about">Choose your discipline</button>';
-  const providers = DISCIPLINES.filter(d => d.id !== recipient.id), selected = providers.find(d => d.id === priorityFolder);
+  if (!recipient || !teamRoles(shared).some(d => d.id === recipient.id)) return '<div class="empty-small">Choose your team profile in About you to open your priority folders.</div><button class="button secondary" data-tab="about">Choose a profile</button>';
+  const providers = teamRoles(shared).filter(d => d.id !== recipient.id);
+  const selected = providers.find(d => d.id === priorityFolder) || providers[0];
+  priorityFolder = selected.id;
   const folders = `<div class="priority-folders" aria-label="Requests from other disciplines">${providers.map(d => {
     const requests = disciplinePriorities(shared,recipient.id,d.id), open = requests.filter(item => item.status !== 'delivered').length;
     return `<button class="priority-folder ${selected?.id === d.id ? 'selected' : ''}" data-priority-folder="${d.id}" aria-pressed="${selected?.id === d.id}"><span class="folder-symbol">${icon('project')}</span><span class="folder-title">${esc(d.name)}</span><span class="folder-count">${requests.length ? `${open} open · ${requests.length} total` : 'No requests yet'}</span>${icon('arrow')}</button>`;
   }).join('')}</div>`;
   const link = '<button class="text-button" data-action="team-plan">View the team’s pull plan ' + icon('arrow') + '</button>';
-  const intro = '<p class="section-hint">Set priorities for the information and actions your discipline needs from each of the others.</p>';
-  if (!selected) return intro + folders + '<div class="empty-small">Open a folder to add requests and put the most important first.</div>' + link;
+  const intro = '<p class="section-hint">These are suggested lists of actions you need from others. Adjust them for your project. The more specific you make each task, and the more you break it into actionable steps, the better the pull plan.</p>';
   const requests = disciplinePriorities(shared,recipient.id,selected.id), next = requests.find(item => item.status !== 'delivered');
-  return intro + folders + `<section class="priority-folder-content" aria-labelledby="priority-folder-title"><div class="delivery-heading"><div class="folder-heading"><h2 id="priority-folder-title">From ${esc(selected.name)}</h2><p class="section-hint">For ${esc(recipient.name)}. Highest priority first. Drag or use the arrows.</p></div><button class="button secondary" data-action="add-delivery">${icon('plus')} Add request</button></div>${requests.length ? `<p class="delivery-next" role="status">${next ? `Next needed: <strong>${esc(next.type === 'action' ? 'Action' : 'Information')}</strong><span>${esc(next.information)} · ${deliveryStatusLabel(next)}</span>` : 'All requests in this folder are complete.'}</p>` : '<div class="empty-small">Add information or an action you need from this discipline, and the task it unlocks.</div>'}${deliveryList(requests,true)}<p class="help-text">These requests are shared with the team. Folder ordering updates the same requests in the team’s pull plan. Apply the prompt so Sonne can plan around the priorities, deadlines and blocked tasks.</p>${link}</section>`;
+  return intro + folders + `<section class="priority-folder-content" aria-labelledby="priority-folder-title"><div class="delivery-heading"><div class="folder-heading"><h2 id="priority-folder-title">From ${esc(selected.name)}</h2><p class="section-hint">For ${esc(recipient.name)}. Highest priority first. Drag or use the arrows.</p></div><button class="button secondary" data-action="add-delivery">${icon('plus')} Add request</button></div>${suggestionList(recipient.id, selected.id, requests)}${requests.length ? `<p class="delivery-next" role="status">${next ? `Next needed: <strong>${esc(next.type === 'action' ? 'Action' : 'Information')}</strong><span>${esc(next.information)} · ${deliveryStatusLabel(next)}</span>` : 'All requests in this folder are complete.'}</p>` : '<div class="empty-small">Add information or an action you need from this discipline, and the task it unlocks.</div>'}${deliveryList(requests,true)}<p class="help-text">These requests are shared with the team. Folder ordering updates the same requests in the team’s pull plan. Apply the prompt so Sonne can plan around the priorities, deadlines and blocked tasks.</p>${link}</section>`;
 }
-function deliveryDialog(id) {
+function addRoleDialog() {
+  const options = DISCIPLINES.flatMap(discipline => {
+    const next = nextTeamRole(shared,discipline.id);
+    return next ? [`<option value="${discipline.id}">${esc(next.name)} · ${esc(discipline.name)}</option>`] : [];
+  });
+  if (!options.length) return toast('All available profiles have been added.');
+  modal('Add team profile',`<form id="add-role-form"><div class="field"><label for="new-role-discipline">Profile to add</label><select id="new-role-discipline" name="discipline">${options.join('')}</select></div><div class="dialog-tools"><button type="button" class="button secondary" data-action="close">Cancel</button><button type="submit" class="button primary">Add profile</button></div></form>`);
+  $('#new-role-discipline').focus();
+}
+async function saveRole(form) {
+  const next = nextTeamRole(shared,new FormData(form).get('discipline'));
+  if (!next) return toast('This discipline has reached its profile limit.');
+  const submit = $('button[type="submit"]',form);
+  if (submit.disabled) return;
+  submit.disabled = true;
+  shared.extraRoles.push(next.id);
+  changed('shared');
+  $('#dialog').close();
+  render();
+  if (await persist()) toast(`${next.name} added.`);
+}
+function deliveryDialog(id, suggestion = '') {
   if (!id && shared.informationPlan.length >= MAX_DELIVERIES) return toast('The shared plan supports up to 30 requests across all discipline folders.');
   const context = priorityContext();
-  const item = id ? shared.informationPlan.find(item => item.id === id) : {id:crypto.randomUUID(),type:'information',information:'',recipient:context?.recipient || state.personal.discipline || 'architecture',provider:context?.provider || '',task:'',neededBy:'',status:'awaiting'};
+  const item = id ? shared.informationPlan.find(item => item.id === id) : {id:crypto.randomUUID(),type:'information',information:suggestion,recipient:context?.recipient || state.personal.discipline || 'architecture',provider:context?.provider || '',task:'',neededBy:'',status:'awaiting'};
   if (!item) return;
-  const disciplines = selected => DISCIPLINES.map(d => `<option value="${d.id}" ${selected === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
+  const disciplines = selected => teamRoles(shared).map(d => `<option value="${d.id}" ${selected === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
   modal(id ? 'Edit request' : 'Add request',`<form id="delivery-form" data-delivery-id="${item.id}" ${context ? `data-folder-recipient="${context.recipient}" data-folder-provider="${context.provider}"` : ''}><div class="form-grid"><div class="field"><label for="delivery-type">Request type</label><select id="delivery-type" name="type">${REQUEST_TYPES.map(t => `<option value="${t.id}" ${t.id === (item.type || 'information') ? 'selected' : ''}>${t.label}</option>`).join('')}</select></div><div class="field"><label for="delivery-status">Status</label><select id="delivery-status" name="status">${DELIVERY_STATUSES.map(s => `<option value="${s.id}" ${s.id === item.status ? 'selected' : ''}>${deliveryStatusLabel({...item,status:s.id})}</option>`).join('')}</select></div><div class="field wide"><label for="delivery-information">${item.type === 'action' ? 'Action needed' : 'Information needed'}</label><input id="delivery-information" name="information" value="${esc(item.information)}" maxlength="300" placeholder="${item.type === 'action' ? 'e.g. Confirm the structural grid' : 'e.g. Final structural grid'}" required></div><div class="field"><label for="delivery-recipient">Recipient</label><select id="delivery-recipient" name="recipient" required ${context ? 'disabled' : ''}>${disciplines(item.recipient)}</select></div><div class="field"><label for="delivery-provider">Provided by</label><select id="delivery-provider" name="provider" ${context ? 'disabled' : ''}><option value="">To be agreed</option>${disciplines(item.provider)}</select></div><div class="field wide"><label for="delivery-task">Task this unlocks</label><input id="delivery-task" name="task" value="${esc(item.task)}" maxlength="300" placeholder="e.g. Coordinate service routes" required></div><div class="field"><label for="delivery-date">Needed by (optional)</label><input id="delivery-date" name="neededBy" type="date" value="${esc(item.neededBy)}"></div></div><p class="help-text">Shared with your team${context ? ' in this discipline folder and the team’s pull plan' : ''}.</p><div class="dialog-tools"><button class="button secondary" type="button" data-action="close">Cancel</button><button class="button primary" type="submit">Save request</button></div></form>`);
   $('#delivery-information').focus();
 }
@@ -294,7 +321,7 @@ function personalPage() {
   if (tab === 'priorities') return disciplineFolders();
   if (tab === 'requests') return informationNeeds();
   if (tab === 'notes') return `<p class="section-hint">Add information from your discipline as separate notes.</p><div class="note-list">${state.personal.notes.map(n => `<article class="discipline-note"><div class="note-heading"><input aria-label="Note title" data-note="${n.id}" data-note-key="title" maxlength="200" placeholder="Note title" value="${esc(n.title)}"><button class="icon-button" data-remove-note="${n.id}" aria-label="Remove note ${esc(n.title || 'Untitled')}">${icon('close')}</button></div><textarea aria-label="Note text" data-note="${n.id}" data-note-key="text" maxlength="20000" rows="4" placeholder="What should Sonne know?">${esc(n.text)}</textarea></article>`).join('')}</div><button class="button secondary" data-action="add-note">${icon('plus')} Add a note</button>${hasLegacy() ? '<button class="text-button legacy-link" data-action="legacy">Review earlier discipline brief</button>' : ''}`;
-  return `<div class="form-grid"><div class="field wide"><label for="my-discipline">Your discipline</label><select id="my-discipline"><option value="">Choose your discipline</option>${DISCIPLINES.map(d => `<option value="${d.id}" ${state.personal.discipline === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></div>${[['introduction','Introduce yourself','Your role, experience and responsibilities.'],['goals','Your goals in the project','What do you want to achieve?'],['values','Your values','What should guide decisions in your work?']].map(([id,label,placeholder]) => field({id,label,placeholder,type:'textarea'},state.personal,'personal','personal')).join('')}</div>`;
+  return `<div class="form-grid"><div class="field wide"><label for="my-discipline">Your team profile</label><select id="my-discipline"><option value="">Choose your team profile</option>${teamRoles(shared).map(d => `<option value="${d.id}" ${state.personal.discipline === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></div>${[['introduction','Introduce yourself','Your role, experience and responsibilities.'],['goals','Your goals in the project','What do you want to achieve?'],['values','Your values','What should guide decisions in your work?']].map(([id,label,placeholder]) => field({id,label,placeholder,type:'textarea'},state.personal,'personal','personal')).join('')}</div>`;
 }
 const hasLegacy = () => DISCIPLINES.some(d => Object.values(state.disciplines[d.id].values).some(Boolean) || state.disciplines[d.id].priorities.length || state.disciplines[d.id].topics.length) || state.project.overview || state.project.name !== 'Untitled project';
 function files(scope) {
@@ -349,7 +376,7 @@ async function addFiles(fileList,scope) {
   try {
     const added = await Promise.all(files.map(async file => {
       const text = /\.(txt|md|markdown|csv|json)$/i.test(file.name) ? await file.text() : null;
-      return {id:crypto.randomUUID(), name:file.name, size:file.size, type:file.type, discipline:scope === 'shared' ? 'project' : state.personal.discipline || 'architecture', category:scope === 'shared' ? 'Project information' : 'Discipline information', note:'', text:text === null ? null : text.slice(0,TEXT_LIMIT), truncated:text !== null && text.length > TEXT_LIMIT, blob:file.slice()};
+      return {id:crypto.randomUUID(), name:file.name, size:file.size, type:file.type, discipline:scope === 'shared' ? 'project' : role(state.personal.discipline)?.discipline || 'architecture', category:scope === 'shared' ? 'Project information' : 'Discipline information', note:'', text:text === null ? null : text.slice(0,TEXT_LIMIT), truncated:text !== null && text.length > TEXT_LIMIT, blob:file.slice()};
     }));
     if (data !== workspace(scope)) return toast('The workspace changed during upload. Add the files again.');
     data.sources.push(...added); changed(scope);
@@ -438,7 +465,14 @@ document.addEventListener('click',async event => {
   switch (button.dataset.action) {
     case 'home': event.preventDefault(); return navigate('home');
     case 'rename-team': return teamNameDialog();
+    case 'add-role': return addRoleDialog();
     case 'add-delivery': return deliveryDialog();
+    case 'use-suggestion': {
+      const context = priorityContext();
+      const suggestion = context && prioritySuggestions(context.recipient,context.provider)[+button.dataset.suggestion];
+      if (suggestion) return deliveryDialog(undefined,suggestion);
+      return;
+    }
     case 'add-cost-category': return costCategoryDialog();
     case 'team-plan': await navigate('team'); if (view === 'team') {tab = 'needs'; render();} return;
     case 'close': $('#dialog').close(); render(); return;
@@ -498,6 +532,7 @@ document.addEventListener('change',event => {
 });
 document.addEventListener('submit',event => {
   event.preventDefault();
+  if (event.target.id === 'add-role-form') {saveRole(event.target); return;}
   if (event.target.id === 'team-name-form') {renameTeam(event.target); return;}
   if (event.target.id === 'delivery-form') {saveDelivery(event.target); return;}
   if (event.target.id === 'cost-category-form') {saveCostCategory(event.target); return;}
