@@ -21,7 +21,6 @@ import shlex
 import secrets
 import signal
 import shutil
-import ssl
 import subprocess
 import sys
 from tempfile import NamedTemporaryFile, TemporaryDirectory
@@ -30,7 +29,7 @@ import warnings
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlsplit
-from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
 
 
 APS = 'https://developer.api.autodesk.com'
@@ -640,6 +639,46 @@ def deliver_enrollment(enrollment, checkout, config_name='config.json'):
     return target
 
 
+def check_windows_https(url, certificate):
+    windows_certificate = subprocess.check_output(['wslpath', '-w', str(certificate)], text=True, timeout=5).strip()
+    probe = """
+fetch(process.argv[1], {signal: AbortSignal.timeout(3000), redirect: 'error'})
+  .then(async response => {
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    if ((await response.json()).ok !== true) throw new Error('Unexpected router health response.');
+  }).catch(error => {
+    console.error('HTTPS probe:', error.cause?.code || error.message);
+    process.exitCode = 1;
+  });
+"""
+    def quote_powershell(value):
+        return "'" + value.replace("'", "''") + "'"
+
+    command = f"""
+$ErrorActionPreference = 'Stop'
+$env:NODE_EXTRA_CA_CERTS = {quote_powershell(windows_certificate)}
+$node = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
+if (!$node) {{
+    $node = Join-Path $env:ProgramFiles 'nodejs/node.exe'
+    if (!(Test-Path -LiteralPath $node -PathType Leaf)) {{
+        [Console]::Error.WriteLine('Windows Node.js is missing from PATH. Install Node.js 22 or 24.')
+        exit 1
+    }}
+}}
+& $node -e {quote_powershell(probe)} {quote_powershell(url)}
+exit $LASTEXITCODE
+"""
+    encoded = base64.b64encode(command.encode('utf-16-le')).decode('ascii')
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+                            capture_output=True, text=True, errors='replace', timeout=10)
+    if result.returncode:
+        output = result.stderr or result.stdout
+        detail = next((line.strip() for line in reversed(output.splitlines()) if line.startswith('HTTPS probe:')), '')
+        if not detail:
+            detail = next((line.strip() for line in reversed(output.splitlines()) if line.strip()), '')
+        raise SetupError(detail[:240] or f'Windows HTTPS probe exited with status {result.returncode}.')
+
+
 def setup_local_revit(runtime):
     if 'microsoft' not in platform.release().lower() and not os.environ.get('WSL_DISTRO_NAME'):
         raise SetupError('Run local Revit setup in WSL on the Windows Revit workstation.')
@@ -658,22 +697,23 @@ def setup_local_revit(runtime):
     with TemporaryDirectory(prefix='sonne-local-tls-') as directory:
         cert = Path(directory) / 'local-ca.crt'
         deadline = time.monotonic() + 30
+        detail = 'The local CA certificate is not ready.'
         while time.monotonic() < deadline:
-            result = subprocess.run([*compose, 'exec', '-T', 'revit-local-https', 'cat',
-                                     '/data/caddy/pki/authorities/local/root.crt'],
-                                    cwd=runtime, capture_output=True, timeout=5)
-            if result.returncode == 0:
-                cert.write_bytes(result.stdout)
-                try:
-                    context = ssl.create_default_context(cafile=str(cert))
-                    with build_opener(ProxyHandler({}), HTTPSHandler(context=context)).open(url + 'health', timeout=3) as response:
-                        if json.load(response).get('ok') is True:
-                            break
-                except (OSError, ValueError):
-                    pass
+            try:
+                result = subprocess.run([*compose, 'exec', '-T', 'revit-local-https', 'cat',
+                                         '/data/caddy/pki/authorities/local/root.crt'],
+                                        cwd=runtime, capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    cert.write_bytes(result.stdout)
+                    check_windows_https(url + 'health', cert)
+                    break
+            except SetupError as error:
+                detail = str(error)
+            except subprocess.TimeoutExpired:
+                detail = 'Timed out waiting for the local CA or the Windows HTTPS probe.'
             time.sleep(1)
         else:
-            raise SetupError('Local HTTPS did not pass its health check. Check the revit-local-https container and port 9443.')
+            raise SetupError(f'Windows could not reach the Revit router at {url}health. {detail}')
         enrollment = runtime / '.state/revit-hub' / f'enroll-{client_id}.json'
         installed = deliver_enrollment(enrollment, source, config_name='config-local.json')
         if installed is None:

@@ -131,7 +131,7 @@ registry; connected clients then register fresh sessions automatically.
 
 ## Revit and Sonne on the same Windows PC
 
-When Sonne runs in WSL on the Revit workstation, run the following from the source checkout in Ubuntu. The local endpoint is bound to Windows/WSL loopback and uses HTTPS with its own CA. The setup confirms that HTTPS reaches the Revit hub before copying enrollment and the public CA certificate to Windows.
+When Sonne runs in WSL on the Revit workstation, run the following from the source checkout in Ubuntu. The local endpoint is bound to Windows/WSL loopback and uses HTTPS with its own CA. The setup checks the connection using Windows Node.js before copying enrollment and the public CA certificate to Windows.
 
 ```bash
 python3 scripts/setup-revit-acc.py --runtime "$HOME/agents/sonne" --local-revit
